@@ -18,7 +18,7 @@ impl DbWorker {
         let (ready_tx, ready_rx) = mpsc::channel::<Result<(), String>>();
 
         std::thread::Builder::new()
-            .name("ncbi-poketext-db".to_string())
+            .name("biodex-db".to_string())
             .spawn(move || {
                 let mut db = match LocalDatabase::open() {
                     Ok(db) => {
