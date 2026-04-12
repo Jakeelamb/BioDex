@@ -4,7 +4,9 @@ BioDex is a terminal-native species atlas with real portraits, range maps, cache
 
 ## Demo
 
-A short terminal demo clip belongs here.
+[![BioDex demo](assets/biodex-demo.gif)](assets/biodex-demo.mp4)
+
+Click the preview to open the full demo clip.
 
 ## What It Does
 

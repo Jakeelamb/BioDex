@@ -33,6 +33,9 @@ const RICH_CACHE_FALLBACK: &str = "rich_cache.fallback";
 const RICH_CACHE_BATCH_SIZE: u32 = 32;
 const RICH_CACHE_CONCURRENCY: usize = 2;
 const CURATED_ANIMAL_PREFETCH_CONCURRENCY: usize = 3;
+const CACHED_PORTRAIT_MAX_DIMENSION: u32 = 960;
+const CACHED_MAP_MAX_WIDTH: u32 = 960;
+const CACHED_MAP_MAX_HEIGHT: u32 = 480;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -1164,28 +1167,30 @@ pub async fn decode_cached_media(
     species: &UnifiedSpecies,
     cached: CachedMedia,
 ) -> (Option<image::DynamicImage>, Option<image::DynamicImage>) {
-    let species_image = cached
-        .species_image
-        .and_then(|data| image::load_from_memory(&data).ok());
+    let species_decode = async move {
+        match cached.species_image {
+            Some(data) => decode_species_image_bytes(data).await,
+            None => None,
+        }
+    };
+    let map_decode = async move {
+        match cached.map_image {
+            Some(data) => decode_cached_map_bytes(data).await,
+            None => CachedMapDecode::Missing,
+        }
+    };
 
-    let map_image = match cached.map_image {
-        Some(data) => match image::load_from_memory(&data).ok() {
-            Some(img) if image_has_transparency(&img) => {
-                if let Some(gbif_key) = species.ids.gbif_key {
-                    service.invalidate_map_image(gbif_key).await;
-                    crate::perf::log_value("image.map.cache_rejected", gbif_key);
-                }
-                None
+    let (species_image, map_image) = tokio::join!(species_decode, map_decode);
+    let map_image = match map_image {
+        CachedMapDecode::Ready(image) => Some(image),
+        CachedMapDecode::Invalid => {
+            if let Some(gbif_key) = species.ids.gbif_key {
+                service.invalidate_map_image(gbif_key).await;
+                crate::perf::log_value("image.map.cache_rejected", gbif_key);
             }
-            Some(img) => Some(world_map::normalize_for_tui(&img)),
-            None => {
-                if let Some(gbif_key) = species.ids.gbif_key {
-                    service.invalidate_map_image(gbif_key).await;
-                }
-                None
-            }
-        },
-        None => None,
+            None
+        }
+        CachedMapDecode::Missing => None,
     };
 
     (species_image, map_image)
@@ -1201,7 +1206,7 @@ pub async fn download_species_image(
     // Check local cache first
     let cached = service.get_cached_media(species).await;
     if let Some(data) = cached.species_image {
-        if let Ok(img) = image::load_from_memory(&data) {
+        if let Some(img) = decode_species_image_bytes(data).await {
             crate::perf::log_elapsed("image.species.cache_hit", image_span);
             return Some(img);
         }
@@ -1222,10 +1227,10 @@ pub async fn download_species_image(
         .ok()?;
 
     let bytes = response.bytes().await.ok()?.to_vec();
-    let image = image::load_from_memory(&bytes).ok();
-    service.cache_species_image_detached(species, bytes);
+    let (image, cache_bytes) = prepare_species_image_for_cache(bytes).await?;
+    service.cache_species_image_detached(species, cache_bytes);
     crate::perf::log_elapsed("image.species.download", image_span);
-    image
+    Some(image)
 }
 
 /// Download GBIF distribution map image and cache it
@@ -1251,16 +1256,18 @@ pub async fn download_map_image_with_options(
     if !force_refresh {
         let cached = service.get_cached_media(species).await;
         if let Some(data) = cached.map_image {
-            if let Ok(img) = image::load_from_memory(&data) {
-                if image_has_transparency(&img) {
+            match decode_cached_map_bytes(data).await {
+                CachedMapDecode::Ready(img) => {
+                    crate::perf::log_elapsed("image.map.cache_hit", map_span);
+                    return Some(img);
+                }
+                CachedMapDecode::Invalid => {
                     service.invalidate_map_image(gbif_key).await;
                     crate::perf::log_value("image.map.cache_rejected", gbif_key);
-                } else {
-                    crate::perf::log_elapsed("image.map.cache_hit", map_span);
-                    return Some(world_map::normalize_for_tui(&img));
                 }
-            } else {
-                service.invalidate_map_image(gbif_key).await;
+                CachedMapDecode::Missing => {
+                    service.invalidate_map_image(gbif_key).await;
+                }
             }
         }
     }
@@ -1268,33 +1275,99 @@ pub async fn download_map_image_with_options(
     // Download occurrence layer from GBIF
     let bytes = gbif.get_map_image(gbif_key).await.ok()?;
 
-    // Load the occurrence layer (transparent PNG with dots)
-    let occurrence_layer = image::load_from_memory(&bytes).ok()?;
-
-    // Composite onto world map background
-    let composited = world_map::composite_with_background(&occurrence_layer);
-    let presentation_map = world_map::normalize_for_tui(&composited);
-
-    // Encode composited image for caching
-    let mut cache_bytes: Vec<u8> = Vec::new();
-    if presentation_map
-        .write_to(
-            &mut std::io::Cursor::new(&mut cache_bytes),
-            image::ImageFormat::Png,
-        )
-        .is_err()
-    {
-        // If encoding fails, cache the original
-        service.cache_map_image_detached(gbif_key, bytes.to_vec());
-        crate::perf::log_elapsed("image.map.download", map_span);
-        return Some(presentation_map);
-    }
-
-    // Cache the composited image
+    let (presentation_map, cache_bytes) = prepare_map_image_for_cache(bytes).await?;
     service.cache_map_image_detached(gbif_key, cache_bytes);
 
     crate::perf::log_elapsed("image.map.download", map_span);
     Some(presentation_map)
+}
+
+enum CachedMapDecode {
+    Ready(image::DynamicImage),
+    Invalid,
+    Missing,
+}
+
+async fn decode_species_image_bytes(data: Vec<u8>) -> Option<image::DynamicImage> {
+    tokio::task::spawn_blocking(move || image::load_from_memory(&data).ok())
+        .await
+        .ok()
+        .flatten()
+}
+
+async fn decode_cached_map_bytes(data: Vec<u8>) -> CachedMapDecode {
+    tokio::task::spawn_blocking(move || {
+        let Some(img) = image::load_from_memory(&data).ok() else {
+            return CachedMapDecode::Invalid;
+        };
+        if image_has_transparency(&img) {
+            return CachedMapDecode::Invalid;
+        }
+        let normalized = world_map::normalize_for_tui(&img);
+        let presentation =
+            resize_for_cache(normalized, CACHED_MAP_MAX_WIDTH, CACHED_MAP_MAX_HEIGHT);
+        CachedMapDecode::Ready(presentation)
+    })
+    .await
+    .unwrap_or(CachedMapDecode::Missing)
+}
+
+async fn prepare_species_image_for_cache(bytes: Vec<u8>) -> Option<(image::DynamicImage, Vec<u8>)> {
+    tokio::task::spawn_blocking(move || {
+        let decoded = image::load_from_memory(&bytes).ok()?;
+        let presentation = resize_for_cache(
+            decoded,
+            CACHED_PORTRAIT_MAX_DIMENSION,
+            CACHED_PORTRAIT_MAX_DIMENSION,
+        );
+        let cache_format = if image_has_transparency(&presentation) {
+            image::ImageFormat::Png
+        } else {
+            image::ImageFormat::Jpeg
+        };
+        let mut cache_bytes = Vec::new();
+        presentation
+            .write_to(&mut std::io::Cursor::new(&mut cache_bytes), cache_format)
+            .ok()?;
+        Some((presentation, cache_bytes))
+    })
+    .await
+    .ok()
+    .flatten()
+}
+
+async fn prepare_map_image_for_cache(bytes: Vec<u8>) -> Option<(image::DynamicImage, Vec<u8>)> {
+    tokio::task::spawn_blocking(move || {
+        let occurrence_layer = image::load_from_memory(&bytes).ok()?;
+        let composited = world_map::composite_with_background(&occurrence_layer);
+        let normalized = world_map::normalize_for_tui(&composited);
+        let presentation =
+            resize_for_cache(normalized, CACHED_MAP_MAX_WIDTH, CACHED_MAP_MAX_HEIGHT);
+
+        let mut cache_bytes = Vec::new();
+        presentation
+            .write_to(
+                &mut std::io::Cursor::new(&mut cache_bytes),
+                image::ImageFormat::Png,
+            )
+            .ok()?;
+        Some((presentation, cache_bytes))
+    })
+    .await
+    .ok()
+    .flatten()
+}
+
+fn resize_for_cache(
+    image: image::DynamicImage,
+    max_width: u32,
+    max_height: u32,
+) -> image::DynamicImage {
+    if image.width() <= max_width && image.height() <= max_height {
+        return image;
+    }
+
+    image.resize(max_width, max_height, image::imageops::FilterType::Triangle)
 }
 
 fn image_has_transparency(image: &image::DynamicImage) -> bool {

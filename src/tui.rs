@@ -4,7 +4,7 @@
 
 use crate::api::gbif::GbifClient;
 use crate::curated_animals::{canonical_curated_species_name, CURATED_ANIMAL_TARGET};
-use crate::local_db::TaxonName;
+use crate::local_db::{CachedMedia, TaxonName};
 use crate::service::SpeciesService;
 use crate::species::{ImageInfo, UnifiedSpecies};
 use crossterm::{
@@ -373,33 +373,36 @@ struct MapImageState {
     picker: Picker,
     source: DynamicImage,
     rendered_area: Option<(u16, u16)>,
-    protocol: StatefulProtocol,
+    protocol: Option<StatefulProtocol>,
 }
 
 impl MapImageState {
     fn new(picker: Picker, image: DynamicImage) -> Self {
-        let protocol = picker.new_resize_protocol(image.clone());
         Self {
             picker,
             source: image,
             rendered_area: None,
-            protocol,
+            protocol: None,
         }
     }
 
-    fn protocol_for_area(&mut self, area: Rect) -> &mut StatefulProtocol {
+    fn protocol_for_area(&mut self, area: Rect) -> Option<&mut StatefulProtocol> {
+        if area.width == 0 || area.height == 0 {
+            return None;
+        }
+
         let area_size = (area.width, area.height);
-        if self.rendered_area != Some(area_size) {
+        if self.rendered_area != Some(area_size) || self.protocol.is_none() {
             let stretched = crate::world_map::stretch_for_terminal_area(
                 &self.source,
                 area.width,
                 area.height,
                 self.picker.font_size(),
             );
-            self.protocol = self.picker.new_resize_protocol(stretched);
+            self.protocol = Some(self.picker.new_resize_protocol(stretched));
             self.rendered_area = Some(area_size);
         }
-        &mut self.protocol
+        self.protocol.as_mut()
     }
 }
 
@@ -1008,11 +1011,6 @@ pub async fn run_tui_loop(
                         {
                             species_list_index = index;
                         }
-                        spawn_species_list(
-                            update_tx.clone(),
-                            service.clone(),
-                            selected_species_name(&species),
-                        );
                         if let Some(index) = browser_entries
                             .iter()
                             .position(|entry| entry.name.eq_ignore_ascii_case(&species.scientific_name))
@@ -1242,17 +1240,10 @@ async fn fetch_species_internal(
     if !force_refresh {
         if let Some(cached) = service.get_cached_with_images(&name).await {
             let species = cached.species;
-            let (species_image, map_image) = crate::decode_cached_media(
-                &service,
-                &species,
-                crate::local_db::CachedMedia {
-                    species_image: cached.species_image,
-                    map_image: cached.map_image,
-                },
-            )
-            .await;
-            let needs_species_image = species_image.is_none();
-            let needs_map_image = map_image.is_none();
+            let cached_media = CachedMedia {
+                species_image: cached.species_image,
+                map_image: cached.map_image,
+            };
 
             let _ = tx
                 .send(TuiUpdate::SpeciesLoaded {
@@ -1260,20 +1251,12 @@ async fn fetch_species_internal(
                     refreshed: false,
                 })
                 .await;
-            let _ = tx
-                .send(TuiUpdate::MediaLoaded {
-                    scientific_name: species.scientific_name.clone(),
-                    species_image,
-                    map_image,
-                })
-                .await;
-            spawn_media_topoff_if_needed(
+            spawn_cached_media_load(
                 tx.clone(),
                 service,
                 gbif,
                 species.clone(),
-                needs_species_image,
-                needs_map_image,
+                Some(cached_media),
             );
             crate::perf::log_value("tui.cached_species_open", &species.scientific_name);
             crate::perf::log_elapsed("tui.fetch_species_open", fetch_span);
@@ -1293,7 +1276,7 @@ async fn fetch_species_internal(
             if force_refresh {
                 fetch_media_background(tx.clone(), service, gbif, new_species, force_refresh).await;
             } else {
-                load_cached_media_background(tx.clone(), service, new_species).await;
+                spawn_cached_media_load(tx.clone(), service, gbif, new_species, None);
             }
 
             crate::perf::log_elapsed(
@@ -1356,12 +1339,31 @@ fn spawn_media_topoff_if_needed(
     });
 }
 
+fn spawn_cached_media_load(
+    tx: mpsc::Sender<TuiUpdate>,
+    service: Arc<SpeciesService>,
+    gbif: Arc<GbifClient>,
+    species: UnifiedSpecies,
+    cached_media: Option<CachedMedia>,
+) {
+    tokio::spawn(async move {
+        load_cached_media_background(tx, service, gbif, species, cached_media).await;
+    });
+}
+
 async fn load_cached_media_background(
     tx: mpsc::Sender<TuiUpdate>,
     service: Arc<SpeciesService>,
+    gbif: Arc<GbifClient>,
     species: UnifiedSpecies,
+    cached_media: Option<CachedMedia>,
 ) {
-    let (species_image, map_image) = crate::load_cached_media(&service, &species).await;
+    let (species_image, map_image) = match cached_media {
+        Some(cached) => crate::decode_cached_media(&service, &species, cached).await,
+        None => crate::load_cached_media(&service, &species).await,
+    };
+    let needs_species_image = species_image.is_none() && species.preferred_image_url().is_some();
+    let needs_map_image = map_image.is_none() && species.ids.gbif_key.is_some();
 
     let _ = tx
         .send(TuiUpdate::MediaLoaded {
@@ -1370,6 +1372,15 @@ async fn load_cached_media_background(
             map_image,
         })
         .await;
+
+    spawn_media_topoff_if_needed(
+        tx,
+        service,
+        gbif,
+        species,
+        needs_species_image,
+        needs_map_image,
+    );
 }
 
 /// Toggle favorite status for a species
@@ -2384,9 +2395,10 @@ fn render_range_strip(
     if let Some(state) = map_state {
         if inner.width >= 10 && inner.height >= 2 {
             let map_widget = StatefulImage::new().resize(Resize::Fit(None));
-            let protocol = state.protocol_for_area(inner);
-            frame.render_stateful_widget(map_widget, inner, protocol);
-            return;
+            if let Some(protocol) = state.protocol_for_area(inner) {
+                frame.render_stateful_widget(map_widget, inner, protocol);
+                return;
+            }
         }
     }
 
