@@ -469,6 +469,14 @@ pub async fn run_tui_loop(
         service.clone(),
         selected_species_name(&species),
     );
+    spawn_media_topoff_if_needed(
+        update_tx.clone(),
+        service.clone(),
+        gbif.clone(),
+        species.clone(),
+        species_image.is_none(),
+        map_image.is_none(),
+    );
 
     loop {
         let spinner_frame = if loading {
@@ -1243,6 +1251,8 @@ async fn fetch_species_internal(
                 },
             )
             .await;
+            let needs_species_image = species_image.is_none();
+            let needs_map_image = map_image.is_none();
 
             let _ = tx
                 .send(TuiUpdate::SpeciesLoaded {
@@ -1257,6 +1267,14 @@ async fn fetch_species_internal(
                     map_image,
                 })
                 .await;
+            spawn_media_topoff_if_needed(
+                tx.clone(),
+                service,
+                gbif,
+                species.clone(),
+                needs_species_image,
+                needs_map_image,
+            );
             crate::perf::log_value("tui.cached_species_open", &species.scientific_name);
             crate::perf::log_elapsed("tui.fetch_species_open", fetch_span);
             return;
@@ -1315,6 +1333,26 @@ fn spawn_species_refresh(
 ) {
     tokio::spawn(async move {
         fetch_species_background_refresh(tx, service, gbif, name).await;
+    });
+}
+
+fn spawn_media_topoff_if_needed(
+    tx: mpsc::Sender<TuiUpdate>,
+    service: Arc<SpeciesService>,
+    gbif: Arc<GbifClient>,
+    species: UnifiedSpecies,
+    needs_species_image: bool,
+    needs_map_image: bool,
+) {
+    let should_fetch_species_image = needs_species_image && species.preferred_image_url().is_some();
+    let should_fetch_map = needs_map_image && species.ids.gbif_key.is_some();
+
+    if !should_fetch_species_image && !should_fetch_map {
+        return;
+    }
+
+    tokio::spawn(async move {
+        fetch_media_background(tx, service, gbif, species, false).await;
     });
 }
 
