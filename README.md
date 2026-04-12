@@ -84,3 +84,9 @@ BioDex pulls from a few sources and caches the merged result locally:
 - Species rows, portraits, and range maps are cached locally after fetch.
 - The default 100-species browser is designed to feel instant once the hot cache is seeded.
 - Offline taxonomy search depends on the GBIF backbone import.
+
+## License
+
+BioDex source code is licensed under the MIT License. See [LICENSE](LICENSE).
+
+Species data, images, range maps, and other third-party content fetched or cached by BioDex are not relicensed by this repository and remain subject to the terms of their original sources.
