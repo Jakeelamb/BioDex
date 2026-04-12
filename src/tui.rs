@@ -52,6 +52,7 @@ const ACCENT_MINT: Color = Color::Rgb(144, 172, 162);
 const PANEL_BORDER: Color = Color::Rgb(74, 86, 97);
 
 const SEARCH_DEBOUNCE_DELAY: Duration = Duration::from_millis(140);
+const SPECIES_AUTO_OPEN_DELAY: Duration = Duration::from_millis(120);
 const SEARCH_SUGGESTION_LIMIT: u32 = 50;
 const TAXON_BROWSER_LIMIT: u32 = 500;
 const SPECIES_LIST_LIMIT: u32 = CURATED_ANIMAL_TARGET as u32;
@@ -208,6 +209,11 @@ struct PendingSearch {
     deadline: TokioInstant,
 }
 
+struct PendingSpeciesOpen {
+    name: String,
+    deadline: TokioInstant,
+}
+
 #[derive(Default)]
 struct SearchRuntime {
     pending: Option<PendingSearch>,
@@ -251,6 +257,30 @@ impl SearchRuntime {
         }
 
         *loading = false;
+    }
+}
+
+#[derive(Default)]
+struct SpeciesListRuntime {
+    pending: Option<PendingSpeciesOpen>,
+}
+
+impl SpeciesListRuntime {
+    fn cancel(&mut self) {
+        self.pending = None;
+    }
+
+    fn queue(&mut self, selected_name: Option<&str>, current_name: &str) {
+        let Some(name) = selected_name.filter(|name| !name.eq_ignore_ascii_case(current_name))
+        else {
+            self.pending = None;
+            return;
+        };
+
+        self.pending = Some(PendingSpeciesOpen {
+            name: name.to_string(),
+            deadline: TokioInstant::now() + SPECIES_AUTO_OPEN_DELAY,
+        });
     }
 }
 
@@ -430,6 +460,7 @@ pub async fn run_tui_loop(
     let mut loading = false;
     let mut loading_start = Instant::now();
     let mut search_runtime = SearchRuntime::default();
+    let mut species_list_runtime = SpeciesListRuntime::default();
 
     let mut event_stream = EventStream::new();
     spawn_browser_for_species(update_tx.clone(), service.clone(), species.clone());
@@ -493,6 +524,7 @@ pub async fn run_tui_loop(
                             match key.code {
                                 KeyCode::Esc => {
                                     search_runtime.reset();
+                                    species_list_runtime.cancel();
                                     search_mode = false;
                                     search_query.clear();
                                     search_suggestions = None;
@@ -525,6 +557,7 @@ pub async fn run_tui_loop(
                                             .as_deref()
                                             .is_none_or(is_species_rank);
                                         search_runtime.reset();
+                                        species_list_runtime.cancel();
                                         search_mode = false;
                                         search_query.clear();
                                         search_suggestions = None;
@@ -610,6 +643,7 @@ pub async fn run_tui_loop(
                             }
                             KeyCode::Char('/') => {
                                 search_runtime.reset();
+                                species_list_runtime.cancel();
                                 search_mode = true;
                                 search_query.clear();
                                 search_suggestions = None;
@@ -629,6 +663,7 @@ pub async fn run_tui_loop(
                             KeyCode::Char('b') => {
                                 browser_history.clear();
                                 navigator_focus = NavigatorFocus::Taxonomy;
+                                species_list_runtime.cancel();
                                 loading = true;
                                 loading_start = Instant::now();
                                 status = StatusBanner::new(
@@ -673,6 +708,9 @@ pub async fn run_tui_loop(
                                     NavigatorFocus::Taxonomy => NavigatorFocus::SpeciesList,
                                     NavigatorFocus::SpeciesList => NavigatorFocus::Taxonomy,
                                 };
+                                if navigator_focus == NavigatorFocus::Taxonomy {
+                                    species_list_runtime.cancel();
+                                }
                                 status = match navigator_focus {
                                     NavigatorFocus::Taxonomy => StatusBanner::new(
                                         StatusTone::Info,
@@ -680,7 +718,7 @@ pub async fn run_tui_loop(
                                     ),
                                     NavigatorFocus::SpeciesList => StatusBanner::new(
                                         StatusTone::Info,
-                                        "A-Z species list active. Use ↑/↓ to skim cached species.",
+                                        "A-Z species list active. Use ↑/↓ to skim; pausing auto-loads the species.",
                                     ),
                                 };
                             }
@@ -692,10 +730,19 @@ pub async fn run_tui_loop(
                                         }
                                     }
                                     NavigatorFocus::SpeciesList => {
+                                        let previous = species_list_index;
                                         if species_list_index
                                             < species_list_entries.len().saturating_sub(1)
                                         {
                                             species_list_index += 1;
+                                        }
+                                        if species_list_index != previous {
+                                            queue_selected_species_auto_open(
+                                                &mut species_list_runtime,
+                                                &species_list_entries,
+                                                species_list_index,
+                                                &species.scientific_name,
+                                            );
                                         }
                                     }
                                 }
@@ -706,11 +753,21 @@ pub async fn run_tui_loop(
                                         browser_index = browser_index.saturating_sub(1);
                                     }
                                     NavigatorFocus::SpeciesList => {
+                                        let previous = species_list_index;
                                         species_list_index = species_list_index.saturating_sub(1);
+                                        if species_list_index != previous {
+                                            queue_selected_species_auto_open(
+                                                &mut species_list_runtime,
+                                                &species_list_entries,
+                                                species_list_index,
+                                                &species.scientific_name,
+                                            );
+                                        }
                                     }
                                 }
                             }
                             KeyCode::Right | KeyCode::Char('l') | KeyCode::Enter => {
+                                species_list_runtime.cancel();
                                 match navigator_focus {
                                     NavigatorFocus::Taxonomy => {
                                         if let Some(entry) = browser_entries.get(browser_index).cloned() {
@@ -787,6 +844,7 @@ pub async fn run_tui_loop(
                             }
                             KeyCode::Left | KeyCode::Char('h') => {
                                 if navigator_focus == NavigatorFocus::SpeciesList {
+                                    species_list_runtime.cancel();
                                     status = StatusBanner::new(
                                         StatusTone::Info,
                                         "A-Z species list active. Press t to swap into taxonomy browsing.",
@@ -833,7 +891,16 @@ pub async fn run_tui_loop(
                                         browser_index = 0;
                                     }
                                     NavigatorFocus::SpeciesList => {
+                                        let previous = species_list_index;
                                         species_list_index = 0;
+                                        if species_list_index != previous {
+                                            queue_selected_species_auto_open(
+                                                &mut species_list_runtime,
+                                                &species_list_entries,
+                                                species_list_index,
+                                                &species.scientific_name,
+                                            );
+                                        }
                                     }
                                 }
                             }
@@ -843,8 +910,17 @@ pub async fn run_tui_loop(
                                         browser_index = browser_entries.len().saturating_sub(1);
                                     }
                                     NavigatorFocus::SpeciesList => {
+                                        let previous = species_list_index;
                                         species_list_index =
                                             species_list_entries.len().saturating_sub(1);
+                                        if species_list_index != previous {
+                                            queue_selected_species_auto_open(
+                                                &mut species_list_runtime,
+                                                &species_list_entries,
+                                                species_list_index,
+                                                &species.scientific_name,
+                                            );
+                                        }
                                     }
                                 }
                             }
@@ -872,6 +948,27 @@ pub async fn run_tui_loop(
                     search_runtime.task = Some(tokio::spawn(async move {
                         fetch_suggestions_local(tx, svc, query, generation).await;
                     }));
+                }
+            }
+
+            _ = async {
+                if let Some(pending) = species_list_runtime.pending.as_ref() {
+                    tokio::time::sleep_until(pending.deadline).await;
+                }
+            }, if species_list_runtime.pending.is_some() => {
+                if let Some(PendingSpeciesOpen { name, .. }) = species_list_runtime.pending.take() {
+                    loading = true;
+                    loading_start = Instant::now();
+                    status = StatusBanner::new(
+                        StatusTone::Info,
+                        format!("Opening {}...", name),
+                    );
+                    let tx = update_tx.clone();
+                    let svc = service.clone();
+                    let gb = gbif.clone();
+                    tokio::spawn(async move {
+                        open_taxon_entry(tx, svc, gb, name, Some("SPECIES".to_string())).await;
+                    });
                 }
             }
 
@@ -932,7 +1029,7 @@ pub async fn run_tui_loop(
                             (true, NavigatorFocus::SpeciesList) => StatusBanner::new(
                                 StatusTone::Success,
                                 format!(
-                                    "Refreshed {}. A-Z list active; press t for taxonomy browsing.",
+                                    "Refreshed {}. A-Z list active; pausing on another species auto-loads it.",
                                     species.scientific_name
                                 ),
                             ),
@@ -946,7 +1043,7 @@ pub async fn run_tui_loop(
                             (false, NavigatorFocus::SpeciesList) => StatusBanner::new(
                                 StatusTone::Success,
                                 format!(
-                                    "Opened {}. Use ↑/↓ for the A-Z list, or press t for taxonomy.",
+                                    "Opened {}. Use ↑/↓ to browse; pausing on another species auto-loads it.",
                                     species.scientific_name
                                 ),
                             ),
@@ -1371,6 +1468,18 @@ fn selected_species_name(species: &UnifiedSpecies) -> Option<String> {
     } else {
         None
     }
+}
+
+fn queue_selected_species_auto_open(
+    runtime: &mut SpeciesListRuntime,
+    entries: &[SiblingTaxon],
+    selected_index: usize,
+    current_name: &str,
+) {
+    runtime.queue(
+        entries.get(selected_index).map(|entry| entry.name.as_str()),
+        current_name,
+    );
 }
 
 async fn send_browser_entries(
@@ -3376,6 +3485,10 @@ fn render_help(frame: &mut Frame) {
         Line::from(vec![
             Span::styled("t         ", Style::default().fg(ACCENT_YELLOW)),
             Span::raw("Swap between A-Z species list and taxonomy"),
+        ]),
+        Line::from(vec![
+            Span::styled("pause     ", Style::default().fg(ACCENT_YELLOW)),
+            Span::raw("In the A-Z list, auto-load the highlighted species"),
         ]),
         Line::from(vec![
             Span::styled("→ l / Ent ", Style::default().fg(ACCENT_YELLOW)),
