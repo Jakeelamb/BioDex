@@ -407,7 +407,7 @@ pub async fn run_tui_loop(
     let mut status = StatusBanner::new(
         StatusTone::Info,
         format!(
-            "{} ready. Tab switches between taxonomy and species browsing.",
+            "{} ready. Use ↑/↓ for the A-Z species list, or press t for taxonomy.",
             species.scientific_name
         ),
     );
@@ -426,7 +426,7 @@ pub async fn run_tui_loop(
     let mut search_selected: usize = 0;
     let mut browser_index: usize = 0;
     let mut species_list_index: usize = 0;
-    let mut navigator_focus = NavigatorFocus::Taxonomy;
+    let mut navigator_focus = NavigatorFocus::SpeciesList;
     let mut loading = false;
     let mut loading_start = Instant::now();
     let mut search_runtime = SearchRuntime::default();
@@ -543,6 +543,7 @@ pub async fn run_tui_loop(
                                             });
                                         } else if let Some(rank) = selected_rank {
                                             browser_history.clear();
+                                            navigator_focus = NavigatorFocus::Taxonomy;
                                             status = StatusBanner::new(
                                                 StatusTone::Info,
                                                 format!("Browsing {}...", name),
@@ -627,6 +628,7 @@ pub async fn run_tui_loop(
                             }
                             KeyCode::Char('b') => {
                                 browser_history.clear();
+                                navigator_focus = NavigatorFocus::Taxonomy;
                                 loading = true;
                                 loading_start = Instant::now();
                                 status = StatusBanner::new(
@@ -666,28 +668,21 @@ pub async fn run_tui_loop(
                                     toggle_favorite(tx, svc, name).await;
                                 });
                             }
-                            KeyCode::Tab | KeyCode::BackTab => {
-                                if species_list_entries.is_empty() {
-                                    status = StatusBanner::new(
-                                        StatusTone::Warning,
-                                        "Species list is empty. Seed or open more species to populate it.",
-                                    );
-                                } else {
-                                    navigator_focus = match navigator_focus {
-                                        NavigatorFocus::Taxonomy => NavigatorFocus::SpeciesList,
-                                        NavigatorFocus::SpeciesList => NavigatorFocus::Taxonomy,
-                                    };
-                                    status = match navigator_focus {
-                                        NavigatorFocus::Taxonomy => StatusBanner::new(
-                                            StatusTone::Info,
-                                            "Taxonomy browser focused. Use ←/→ to move the lineage.",
-                                        ),
-                                        NavigatorFocus::SpeciesList => StatusBanner::new(
-                                            StatusTone::Info,
-                                            "Species list focused. Use ↑/↓ to skim cached species.",
-                                        ),
-                                    };
-                                }
+                            KeyCode::Char('t') => {
+                                navigator_focus = match navigator_focus {
+                                    NavigatorFocus::Taxonomy => NavigatorFocus::SpeciesList,
+                                    NavigatorFocus::SpeciesList => NavigatorFocus::Taxonomy,
+                                };
+                                status = match navigator_focus {
+                                    NavigatorFocus::Taxonomy => StatusBanner::new(
+                                        StatusTone::Info,
+                                        "Taxonomy browser active. Use ←/→ to walk the lineage.",
+                                    ),
+                                    NavigatorFocus::SpeciesList => StatusBanner::new(
+                                        StatusTone::Info,
+                                        "A-Z species list active. Use ↑/↓ to skim cached species.",
+                                    ),
+                                };
                             }
                             KeyCode::Down | KeyCode::Char('j') => {
                                 match navigator_focus {
@@ -792,10 +787,9 @@ pub async fn run_tui_loop(
                             }
                             KeyCode::Left | KeyCode::Char('h') => {
                                 if navigator_focus == NavigatorFocus::SpeciesList {
-                                    navigator_focus = NavigatorFocus::Taxonomy;
                                     status = StatusBanner::new(
                                         StatusTone::Info,
-                                        "Taxonomy browser focused.",
+                                        "A-Z species list active. Press t to swap into taxonomy browsing.",
                                     );
                                 } else if let Some(previous) = browser_history.pop() {
                                     browser_entries = previous.entries;
@@ -927,22 +921,35 @@ pub async fn run_tui_loop(
                             browser_history.clear();
                             spawn_browser_for_species(update_tx.clone(), service.clone(), species.clone());
                         }
-                        status = if refreshed {
-                            StatusBanner::new(
+                        status = match (refreshed, navigator_focus) {
+                            (true, NavigatorFocus::Taxonomy) => StatusBanner::new(
                                 StatusTone::Success,
                                 format!(
-                                    "Refreshed {}. Tab flips between taxonomy and the species list.",
+                                    "Refreshed {}. Taxonomy browser still active; press t for the A-Z list.",
                                     species.scientific_name
                                 ),
-                            )
-                        } else {
-                            StatusBanner::new(
+                            ),
+                            (true, NavigatorFocus::SpeciesList) => StatusBanner::new(
                                 StatusTone::Success,
                                 format!(
-                                    "Opened {}. Use Tab to keep moving through species or taxonomy.",
+                                    "Refreshed {}. A-Z list active; press t for taxonomy browsing.",
                                     species.scientific_name
                                 ),
-                            )
+                            ),
+                            (false, NavigatorFocus::Taxonomy) => StatusBanner::new(
+                                StatusTone::Success,
+                                format!(
+                                    "Opened {}. Taxonomy browser still active; press t for the A-Z list.",
+                                    species.scientific_name
+                                ),
+                            ),
+                            (false, NavigatorFocus::SpeciesList) => StatusBanner::new(
+                                StatusTone::Success,
+                                format!(
+                                    "Opened {}. Use ↑/↓ for the A-Z list, or press t for taxonomy.",
+                                    species.scientific_name
+                                ),
+                            ),
                         };
                     }
                     Some(TuiUpdate::MediaLoaded { scientific_name, species_image: new_img, map_image: new_map }) => {
@@ -1853,8 +1860,8 @@ fn render_status_bar(
         Span::raw(" "),
         search_badge,
         Span::raw("  "),
-        Span::styled("Tab ", Style::default().fg(ACCENT_YELLOW)),
-        Span::styled("pane", Style::default().fg(Color::Rgb(224, 228, 231))),
+        Span::styled("t ", Style::default().fg(ACCENT_YELLOW)),
+        Span::styled("mode", Style::default().fg(Color::Rgb(224, 228, 231))),
         Span::raw("  "),
         Span::styled("↑↓ ", Style::default().fg(ACCENT_YELLOW)),
         Span::styled("move", Style::default().fg(Color::Rgb(224, 228, 231))),
@@ -2039,7 +2046,7 @@ fn render_wide_layout(frame: &mut Frame, area: Rect, state: &mut RenderState<'_>
         state.map_state,
         state.is_favorite,
     );
-    render_stats_panel(frame, chunks[1], state.species);
+    render_stats_panel(frame, chunks[1], state.species, state.is_favorite);
     render_taxonomy_panel(frame, chunks[2], state);
 }
 
@@ -2058,7 +2065,7 @@ fn render_medium_layout(frame: &mut Frame, area: Rect, state: &mut RenderState<'
         state.map_state,
         state.is_favorite,
     );
-    render_stats_panel(frame, top_chunks[1], state.species);
+    render_stats_panel(frame, top_chunks[1], state.species, state.is_favorite);
     render_taxonomy_panel(frame, main_chunks[1], state);
 }
 
@@ -2078,7 +2085,7 @@ fn render_narrow_layout(frame: &mut Frame, area: Rect, state: &mut RenderState<'
         state.map_state,
         state.is_favorite,
     );
-    render_stats_panel(frame, chunks[1], state.species);
+    render_stats_panel(frame, chunks[1], state.species, state.is_favorite);
     render_taxonomy_panel(frame, chunks[2], state);
 }
 
@@ -2246,7 +2253,7 @@ fn render_range_strip(
     }
 }
 
-fn render_stats_panel(frame: &mut Frame, area: Rect, species: &UnifiedSpecies) {
+fn render_stats_panel(frame: &mut Frame, area: Rect, species: &UnifiedSpecies, is_favorite: bool) {
     let is_species = is_species_rank(&species.rank);
     let title = if is_species {
         " Dex Stats "
@@ -2272,17 +2279,41 @@ fn render_stats_panel(frame: &mut Frame, area: Rect, species: &UnifiedSpecies) {
         return;
     }
 
+    if inner.height < 6 {
+        render_species_taxonomy_summary(frame, inner, species, is_favorite);
+        return;
+    }
+
+    let summary_height = if inner.height >= 18 {
+        5
+    } else if inner.height >= 14 {
+        4
+    } else {
+        3
+    };
+    let chunks =
+        Layout::vertical([Constraint::Length(summary_height), Constraint::Min(3)]).split(inner);
+
+    render_species_taxonomy_summary(frame, chunks[0], species, is_favorite);
+    render_species_stat_section(frame, chunks[1], species);
+}
+
+fn render_species_stat_section(frame: &mut Frame, area: Rect, species: &UnifiedSpecies) {
+    if area.height == 0 {
+        return;
+    }
+
     let meters = stat_meters(species);
-    let expanded_meters = inner.height >= 12 && inner.width >= 24;
+    let expanded_meters = area.height >= 7 && area.width >= 24;
     let meter_height = if expanded_meters { 2 } else { 1 };
     let footer_reserve = if expanded_meters { 3 } else { 1 };
-    let max_meter_rows = inner.height.saturating_sub(footer_reserve);
+    let max_meter_rows = area.height.saturating_sub(footer_reserve);
     let height_limited_count = (max_meter_rows / meter_height).max(1) as usize;
-    let preferred_count = if inner.height >= 11 {
+    let preferred_count = if area.height >= 10 {
         5
-    } else if inner.height >= 9 {
+    } else if area.height >= 8 {
         4
-    } else if inner.height >= 7 {
+    } else if area.height >= 6 {
         3
     } else {
         2
@@ -2290,11 +2321,11 @@ fn render_stats_panel(frame: &mut Frame, area: Rect, species: &UnifiedSpecies) {
     let bar_count = preferred_count.min(height_limited_count).min(meters.len());
 
     let mut constraints = vec![Constraint::Length(meter_height); bar_count];
-    let show_footer = inner.height > bar_count as u16 * meter_height;
+    let show_footer = area.height > bar_count as u16 * meter_height;
     if show_footer {
         constraints.push(Constraint::Min(1));
     }
-    let chunks = Layout::vertical(constraints).split(inner);
+    let chunks = Layout::vertical(constraints).split(area);
 
     for (chunk, meter) in chunks.iter().take(bar_count).zip(meters.iter()) {
         render_stat_meter(frame, *chunk, meter);
@@ -2464,118 +2495,64 @@ fn render_taxon_summary_panel(frame: &mut Frame, area: Rect, species: &UnifiedSp
 }
 
 fn render_taxonomy_panel(frame: &mut Frame, area: Rect, state: &RenderState<'_>) {
+    let mode_title = match state.navigator_focus {
+        NavigatorFocus::SpeciesList => " Species Navigator ",
+        NavigatorFocus::Taxonomy => " Taxonomy Browser ",
+    };
     let block = Block::default()
         .borders(Borders::ALL)
         .border_style(Style::default().fg(DATA_EDGE))
         .style(Style::default().bg(PANEL_BG))
-        .title(" Navigator ")
+        .title(mode_title)
         .title_style(Style::default().fg(Color::Black).bg(DATA_EDGE).bold());
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
-    if inner.height < 4 {
+    if inner.height == 0 {
         render_navigation_lists(frame, inner, state);
         return;
     }
-
-    let summary_height = if inner.height >= 20 {
-        8
-    } else if inner.height >= 16 {
-        7
-    } else if inner.height >= 12 {
-        6
-    } else {
-        5
-    };
-    let chunks =
-        Layout::vertical([Constraint::Length(summary_height), Constraint::Min(3)]).split(inner);
-
-    render_taxonomy_profile(frame, chunks[0], state.species, state.is_favorite);
-    render_navigation_lists(frame, chunks[1], state);
+    render_navigation_lists(frame, inner, state);
 }
 
 fn render_navigation_lists(frame: &mut Frame, area: Rect, state: &RenderState<'_>) {
-    if state.species_list_entries.is_empty() || area.width < 54 || area.height < 7 {
-        let (entries, title, selected, show_rank) = if state.navigator_focus
-            == NavigatorFocus::SpeciesList
-            && !state.species_list_entries.is_empty()
-        {
-            (
-                state.species_list_entries,
-                "Species List",
-                state.species_list_index,
-                false,
-            )
-        } else {
-            (
-                state.browser_entries,
-                state.browser_title,
-                state.browser_index,
-                true,
-            )
-        };
-        render_browser_list(frame, area, entries, title, selected, true, show_rank);
-        return;
-    }
-
-    let panes =
-        Layout::horizontal([Constraint::Percentage(54), Constraint::Percentage(46)]).split(area);
-
-    render_browser_list(
-        frame,
-        panes[0],
-        state.browser_entries,
-        state.browser_title,
-        state.browser_index,
-        state.navigator_focus == NavigatorFocus::Taxonomy,
-        true,
-    );
-    render_browser_list(
-        frame,
-        panes[1],
-        state.species_list_entries,
-        "Species List",
-        state.species_list_index,
-        state.navigator_focus == NavigatorFocus::SpeciesList,
-        false,
-    );
+    let (entries, title, selected, show_rank) = match state.navigator_focus {
+        NavigatorFocus::SpeciesList => (
+            state.species_list_entries,
+            "Species List",
+            state.species_list_index,
+            false,
+        ),
+        NavigatorFocus::Taxonomy => (
+            state.browser_entries,
+            state.browser_title,
+            state.browser_index,
+            true,
+        ),
+    };
+    render_browser_list(frame, area, entries, title, selected, true, show_rank);
 }
 
-fn render_taxonomy_profile(
+fn render_species_taxonomy_summary(
     frame: &mut Frame,
     area: Rect,
     species: &UnifiedSpecies,
     is_favorite: bool,
 ) {
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(DATA_EDGE))
-        .style(Style::default().bg(DATA_BG))
-        .title(" Profile ")
-        .title_style(Style::default().fg(Color::Black).bg(DATA_EDGE).bold());
-    let inner = block.inner(area);
-    frame.render_widget(block, area);
+    if area.width == 0 || area.height == 0 {
+        return;
+    }
 
+    let inner = area;
     let kingdom_color = get_kingdom_color(&species.taxonomy.kingdom);
     let rank_label = display_rank(&species.rank);
-    let common_name = primary_common_name(species);
-
-    let mut lines = vec![Line::from(Span::styled(
-        trim_for_line(
-            &species.scientific_name,
-            inner.width.saturating_sub(1) as usize,
-        ),
-        scientific_name_style(&species.rank, Style::default().fg(SHELL_PANEL).bold()),
-    ))];
-
-    if inner.height >= 2 {
-        if let Some(common_name) = common_name {
-            lines.push(Line::from(Span::styled(
-                trim_for_line(common_name, inner.width.saturating_sub(1) as usize),
-                Style::default().fg(ACCENT_MINT),
-            )));
-        }
-    }
+    let lineage = species
+        .taxonomy
+        .build_display_lineage(&species.scientific_name, &species.rank)
+        .into_iter()
+        .map(|entry| entry.name)
+        .collect::<Vec<_>>()
+        .join(" > ");
 
     let mut badges = vec![
         badge(
@@ -2601,23 +2578,25 @@ fn render_taxonomy_profile(
         badges.push(badge(status, Color::White, conservation_color(status)));
     }
 
-    if inner.height >= 3 {
-        lines.push(Line::from(badges));
+    let mut lines = vec![Line::from(badges)];
+    if inner.height >= 2 {
+        lines.push(Line::from(vec![
+            Span::styled("History ", Style::default().fg(Color::DarkGray)),
+            Span::styled(
+                trim_for_line(&lineage, inner.width.saturating_sub(8) as usize),
+                Style::default().fg(HEADER_MUTED),
+            ),
+        ]));
     }
-    if inner.height >= 4 {
-        let breadcrumb = species
-            .taxonomy
-            .lineage
-            .iter()
-            .map(|entry| entry.name.as_str())
-            .collect::<Vec<_>>()
-            .join(" > ");
-        lines.push(Line::from(Span::styled(
-            trim_for_line(&breadcrumb, inner.width.saturating_sub(1) as usize),
-            Style::default().fg(HEADER_MUTED),
+    if inner.height >= 3 {
+        lines.push(Line::from(compact_taxonomy_spans(
+            "Kingdom",
+            species.taxonomy.kingdom.as_deref(),
+            "Phylum",
+            species.taxonomy.phylum.as_deref(),
         )));
     }
-    if inner.height >= 5 {
+    if inner.height >= 4 {
         lines.push(Line::from(compact_taxonomy_spans(
             "Class",
             species.taxonomy.class.as_deref(),
@@ -2625,7 +2604,7 @@ fn render_taxonomy_profile(
             species.taxonomy.order.as_deref(),
         )));
     }
-    if inner.height >= 6 {
+    if inner.height >= 5 {
         lines.push(Line::from(compact_taxonomy_spans(
             "Family",
             species.taxonomy.family.as_deref(),
@@ -2633,19 +2612,8 @@ fn render_taxonomy_profile(
             species.taxonomy.genus.as_deref(),
         )));
     }
-    if inner.height >= 7 {
-        if is_species_rank(&species.rank) {
-            lines.push(Line::from(compact_life_history_spans(species)));
-        } else {
-            lines.push(Line::from(range_summary_spans(species)));
-        }
-    }
-    if inner.height >= 8 {
-        if is_species_rank(&species.rank) {
-            lines.push(Line::from(compact_genome_spans(species)));
-        } else {
-            lines.push(Line::from(source_badges(species)));
-        }
+    if inner.height >= 6 {
+        lines.push(Line::from(source_badges(species)));
     }
 
     frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: true }), inner);
@@ -3231,58 +3199,6 @@ fn compact_taxonomy_spans(
     ]
 }
 
-fn compact_life_history_spans(species: &UnifiedSpecies) -> Vec<Span<'static>> {
-    let mut spans = Vec::new();
-
-    spans.push(Span::styled("Life ", Style::default().fg(Color::DarkGray)));
-    if let Some(years) = species.life_history.lifespan_years {
-        spans.push(Span::styled(
-            format_lifespan_compact(years),
-            Style::default().fg(Color::White),
-        ));
-    } else {
-        spans.push(Span::styled(
-            "unlogged",
-            Style::default().fg(Color::Rgb(224, 228, 231)),
-        ));
-    }
-
-    spans.push(Span::raw(" │ "));
-    spans.push(Span::styled(
-        format!("{} ", primary_size_label(species)),
-        Style::default().fg(Color::DarkGray),
-    ));
-    if let Some(meters) = primary_size_meters(species) {
-        spans.push(Span::styled(
-            format_length_compact(meters),
-            Style::default().fg(Color::White),
-        ));
-    } else {
-        spans.push(Span::styled(
-            "unlogged",
-            Style::default().fg(Color::Rgb(224, 228, 231)),
-        ));
-    }
-
-    spans.push(Span::raw(" │ "));
-    spans.push(Span::styled("Mass ", Style::default().fg(Color::DarkGray)));
-    if let Some(kilograms) = species.life_history.mass_kilograms {
-        spans.push(Span::styled(
-            format_mass_compact(kilograms),
-            Style::default().fg(Color::White),
-        ));
-    } else {
-        spans.push(Span::styled(
-            "unlogged",
-            Style::default().fg(Color::Rgb(224, 228, 231)),
-        ));
-    }
-
-    spans.push(Span::raw(" │ "));
-    spans.extend(reproduction_summary_spans(species));
-    spans
-}
-
 fn compact_genome_spans(species: &UnifiedSpecies) -> Vec<Span<'static>> {
     let genome = &species.genome;
     let genome_size = genome
@@ -3455,11 +3371,11 @@ fn render_help(frame: &mut Frame) {
         Line::from(""),
         Line::from(vec![
             Span::styled("↑/↓ j/k   ", Style::default().fg(ACCENT_YELLOW)),
-            Span::raw("Move through the focused navigation pane"),
+            Span::raw("Move through the active navigator mode"),
         ]),
         Line::from(vec![
-            Span::styled("Tab       ", Style::default().fg(ACCENT_YELLOW)),
-            Span::raw("Switch between taxonomy and species list"),
+            Span::styled("t         ", Style::default().fg(ACCENT_YELLOW)),
+            Span::raw("Swap between A-Z species list and taxonomy"),
         ]),
         Line::from(vec![
             Span::styled("→ l / Ent ", Style::default().fg(ACCENT_YELLOW)),
@@ -3467,7 +3383,7 @@ fn render_help(frame: &mut Frame) {
         ]),
         Line::from(vec![
             Span::styled("← h       ", Style::default().fg(ACCENT_YELLOW)),
-            Span::raw("Open the parent taxon or return to taxonomy"),
+            Span::raw("Move up one taxonomy level"),
         ]),
         Line::from(vec![
             Span::styled("g / G     ", Style::default().fg(ACCENT_YELLOW)),
@@ -3491,7 +3407,7 @@ fn render_help(frame: &mut Frame) {
         ]),
         Line::from(vec![
             Span::styled("b         ", Style::default().fg(ACCENT_YELLOW)),
-            Span::raw("Jump to the kingdom browser"),
+            Span::raw("Jump into taxonomy at the kingdom level"),
         ]),
         Line::from(vec![
             Span::styled("q / Esc   ", Style::default().fg(ACCENT_YELLOW)),
