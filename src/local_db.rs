@@ -13,7 +13,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 const SCHEMA_VERSION: i32 = 5;
 const DEFAULT_CACHE_TTL_SECS: i64 = 60 * 60 * 24 * 30; // 30 days
-const MAP_CACHE_VERSION: u32 = 2;
+const MAP_CACHE_VERSION: u32 = 3;
 
 fn curated_species_sql_filter() -> String {
     let names = CURATED_ANIMAL_SPECIES
@@ -1179,7 +1179,7 @@ mod tests {
 
     #[test]
     fn test_map_cache_key_is_versioned() {
-        assert_eq!(LocalDatabase::map_cache_key(5219408), "gbif_map_v2_5219408");
+        assert_eq!(LocalDatabase::map_cache_key(5219408), "gbif_map_v3_5219408");
     }
 
     #[test]

@@ -7,15 +7,15 @@ use image::{imageops::FilterType, DynamicImage, Rgba, RgbaImage};
 use std::sync::OnceLock;
 
 /// Ocean colors for the base map.
-const OCEAN_DEEP_COLOR: Rgba<u8> = Rgba([24, 53, 92, 255]);
-const OCEAN_COLOR: Rgba<u8> = Rgba([56, 92, 138, 255]);
-const OCEAN_SHALLOW_COLOR: Rgba<u8> = Rgba([92, 148, 204, 255]);
+const OCEAN_DEEP_COLOR: Rgba<u8> = Rgba([42, 54, 66, 255]);
+const OCEAN_COLOR: Rgba<u8> = Rgba([70, 83, 96, 255]);
+const OCEAN_SHALLOW_COLOR: Rgba<u8> = Rgba([104, 118, 132, 255]);
 /// Subtle grid lines so open water still reads as "map" rather than blank background.
-const OCEAN_GRID_COLOR: Rgba<u8> = Rgba([78, 122, 176, 255]);
+const OCEAN_GRID_COLOR: Rgba<u8> = Rgba([95, 108, 120, 255]);
 /// Land color with enough separation from both the ocean and the yellow occurrence dots.
-const LAND_COLOR: Rgba<u8> = Rgba([106, 142, 102, 255]);
+const LAND_COLOR: Rgba<u8> = Rgba([114, 122, 112, 255]);
 /// Thin coastline accent to make continent edges readable at TUI sizes.
-const COASTLINE_COLOR: Rgba<u8> = Rgba([188, 214, 165, 255]);
+const COASTLINE_COLOR: Rgba<u8> = Rgba([164, 172, 160, 255]);
 
 /// Size of the map tile (GBIF uses @2x = 512x512)
 const TILE_SIZE: u32 = 512;
