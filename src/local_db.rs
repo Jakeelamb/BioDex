@@ -869,6 +869,26 @@ impl LocalDatabase {
         rows.collect()
     }
 
+    pub fn get_cached_species_names(&self, limit: u32) -> rusqlite::Result<Vec<String>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT scientific_name
+             FROM (
+                 SELECT json_extract(data_json, '$.scientific_name') AS scientific_name
+                 FROM species
+                 WHERE lower(json_extract(data_json, '$.rank')) = 'species'
+                 UNION
+                 SELECT json_extract(data_json, '$.scientific_name') AS scientific_name
+                 FROM rich_species
+                 WHERE lower(json_extract(data_json, '$.rank')) = 'species'
+             )
+             ORDER BY scientific_name COLLATE NOCASE
+             LIMIT ?1",
+        )?;
+
+        let rows = stmt.query_map(params![limit], |row| row.get::<_, String>(0))?;
+        rows.collect()
+    }
+
     pub fn get_cached_kingdoms(&self) -> rusqlite::Result<Vec<String>> {
         let mut stmt = self.conn.prepare(
             &format!(
@@ -1341,5 +1361,86 @@ mod tests {
 
         let seabass_hits = db.search_taxon_names("seabass", 20).unwrap();
         assert!(seabass_hits.is_empty());
+    }
+
+    #[test]
+    fn get_cached_species_names_dedupes_and_sorts_species_rows() {
+        let db = LocalDatabase::open_in_memory().unwrap();
+
+        let lion = UnifiedSpecies {
+            scientific_name: "Panthera leo".to_string(),
+            common_names: vec!["Lion".to_string()],
+            rank: "species".to_string(),
+            taxonomy: crate::species::Taxonomy::default(),
+            ids: crate::species::ExternalIds::default(),
+            genome: crate::species::GenomeStats::default(),
+            life_history: crate::species::LifeHistory {
+                extraction_version: crate::species::CURRENT_LIFE_HISTORY_VERSION,
+                ..crate::species::LifeHistory::default()
+            },
+            description: None,
+            wikipedia_extract: None,
+            wikipedia_url: None,
+            conservation_status: None,
+            iucn_status: None,
+            observations_count: None,
+            gbif_occurrences: None,
+            top_countries: Vec::new(),
+            distribution: crate::species::Distribution::default(),
+            images: Vec::new(),
+        };
+        let wolf = UnifiedSpecies {
+            scientific_name: "Canis lupus".to_string(),
+            common_names: vec!["Wolf".to_string()],
+            rank: "species".to_string(),
+            taxonomy: crate::species::Taxonomy::default(),
+            ids: crate::species::ExternalIds::default(),
+            genome: crate::species::GenomeStats::default(),
+            life_history: crate::species::LifeHistory {
+                extraction_version: crate::species::CURRENT_LIFE_HISTORY_VERSION,
+                ..crate::species::LifeHistory::default()
+            },
+            description: None,
+            wikipedia_extract: None,
+            wikipedia_url: None,
+            conservation_status: None,
+            iucn_status: None,
+            observations_count: None,
+            gbif_occurrences: None,
+            top_countries: Vec::new(),
+            distribution: crate::species::Distribution::default(),
+            images: Vec::new(),
+        };
+        let genus = UnifiedSpecies {
+            scientific_name: "Panthera".to_string(),
+            common_names: vec!["Panthera".to_string()],
+            rank: "genus".to_string(),
+            taxonomy: crate::species::Taxonomy::default(),
+            ids: crate::species::ExternalIds::default(),
+            genome: crate::species::GenomeStats::default(),
+            life_history: crate::species::LifeHistory {
+                extraction_version: crate::species::CURRENT_LIFE_HISTORY_VERSION,
+                ..crate::species::LifeHistory::default()
+            },
+            description: None,
+            wikipedia_extract: None,
+            wikipedia_url: None,
+            conservation_status: None,
+            iucn_status: None,
+            observations_count: None,
+            gbif_occurrences: None,
+            top_countries: Vec::new(),
+            distribution: crate::species::Distribution::default(),
+            images: Vec::new(),
+        };
+
+        db.cache_species(&lion).unwrap();
+        db.cache_rich_species(&lion).unwrap();
+        db.cache_rich_species(&wolf).unwrap();
+        db.cache_species(&genus).unwrap();
+
+        let names = db.get_cached_species_names(10).unwrap();
+
+        assert_eq!(names, vec!["Canis lupus", "Panthera leo"]);
     }
 }

@@ -192,6 +192,12 @@ impl DbWorker {
         .unwrap_or_default()
     }
 
+    pub async fn get_cached_species_names(&self, limit: u32) -> Vec<String> {
+        self.request(move |db| db.get_cached_species_names(limit).unwrap_or_default())
+            .await
+            .unwrap_or_default()
+    }
+
     pub async fn get_cached_kingdoms(&self) -> Vec<String> {
         self.request(|db| db.get_cached_kingdoms().unwrap_or_default())
             .await

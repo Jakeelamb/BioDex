@@ -276,6 +276,10 @@ impl SpeciesService {
         self.db.get_species_batch_after(after_gbif_key, limit).await
     }
 
+    pub async fn get_cached_species_names(&self, limit: u32) -> Vec<String> {
+        self.db.get_cached_species_names(limit).await
+    }
+
     pub async fn get_cached_kingdoms(&self) -> Vec<String> {
         self.db.get_cached_kingdoms().await
     }
