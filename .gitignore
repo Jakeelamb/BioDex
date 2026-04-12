@@ -2,4 +2,5 @@
 __pycache__/
 *.pyc
 .codex/
+.codex
 data_sources/
