@@ -2,6 +2,9 @@
 name = "biodex"
 version = "0.1.0"
 edition = "2021"
+description = "Terminal-native species atlas with cached images, range maps, and taxonomy browsing"
+repository = "https://github.com/Jakeelamb/BioDex"
+readme = "README.md"
 
 [dependencies]
 tokio = { version = "1", features = ["full"] }

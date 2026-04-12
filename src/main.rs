@@ -119,7 +119,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn print_help() {
-    println!("BioDex - Species Database TUI");
+    println!("BioDex - Terminal Species Atlas");
     println!();
     println!("USAGE:");
     println!("    biodex [OPTIONS] [SPECIES_NAME]");

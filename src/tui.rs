@@ -1,4 +1,4 @@
-//! Poketex-style TUI for species display
+//! BioDex TUI for species display
 //!
 //! Features real images, gauge-based stats, and adaptive layout.
 
@@ -599,7 +599,7 @@ pub async fn run_tui_loop(
                                     } else {
                                         status = StatusBanner::new(
                                             StatusTone::Warning,
-                                            "Search is limited to the curated FieldDex species and their cached taxonomy.",
+                                            "Search is limited to the curated BioDex species pack and cached taxonomy.",
                                         );
                                     }
                                 }
@@ -1820,7 +1820,7 @@ fn render_frame(frame: &mut Frame, area: Rect, state: &mut RenderState<'_>) {
         .borders(Borders::ALL)
         .border_style(Style::default().fg(SHELL_EDGE))
         .style(Style::default().bg(SHELL_RED))
-        .title(" FieldDex ")
+        .title(" BioDex ")
         .title_style(Style::default().fg(Color::Black).bg(ACCENT_YELLOW).bold());
     let inner = shell.inner(area);
     frame.render_widget(shell, area);
@@ -3512,7 +3512,7 @@ fn render_help(frame: &mut Frame) {
 
     let help_text = vec![
         Line::from(Span::styled(
-            "FieldDex Controls",
+            "BioDex Controls",
             Style::default().bold().fg(Color::Cyan),
         )),
         Line::from(""),
