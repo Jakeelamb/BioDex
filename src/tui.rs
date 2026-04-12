@@ -3,7 +3,7 @@
 //! Features real images, gauge-based stats, and adaptive layout.
 
 use crate::api::gbif::GbifClient;
-use crate::curated_animals::canonical_curated_species_name;
+use crate::curated_animals::{canonical_curated_species_name, CURATED_ANIMAL_TARGET};
 use crate::local_db::TaxonName;
 use crate::service::SpeciesService;
 use crate::species::{ImageInfo, UnifiedSpecies};
@@ -54,7 +54,7 @@ const PANEL_BORDER: Color = Color::Rgb(74, 86, 97);
 const SEARCH_DEBOUNCE_DELAY: Duration = Duration::from_millis(140);
 const SEARCH_SUGGESTION_LIMIT: u32 = 50;
 const TAXON_BROWSER_LIMIT: u32 = 500;
-const SPECIES_LIST_LIMIT: u32 = 1024;
+const SPECIES_LIST_LIMIT: u32 = CURATED_ANIMAL_TARGET as u32;
 const TAXON_ALIASES: &[TaxonAlias] = &[
     TaxonAlias {
         query: "animals",
