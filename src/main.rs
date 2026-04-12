@@ -119,10 +119,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn print_help() {
-    println!("ncbi_poketext - Species Database TUI");
+    println!("BioDex - Species Database TUI");
     println!();
     println!("USAGE:");
-    println!("    ncbi_poketext [OPTIONS] [SPECIES_NAME]");
+    println!("    biodex [OPTIONS] [SPECIES_NAME]");
     println!();
     println!("OPTIONS:");
     println!("    -t, --text              Text-only output (no TUI)");
@@ -149,11 +149,11 @@ fn print_help() {
     println!("    q, Esc                  Quit/close panel");
     println!();
     println!("EXAMPLES:");
-    println!("    ncbi_poketext                    # Default: Animalia");
-    println!("    ncbi_poketext \"Homo sapiens\"     # Search for humans");
-    println!("    ncbi_poketext --import-backbone  # Download offline search data");
-    println!("    ncbi_poketext --prefetch         # Materialize the hot cache");
-    println!("    ncbi_poketext --cache-all-rich   # Long-running resumable rich cache sweep");
+    println!("    biodex                    # Default: Animalia");
+    println!("    biodex \"Homo sapiens\"     # Search for humans");
+    println!("    biodex --import-backbone  # Download offline search data");
+    println!("    biodex --prefetch         # Materialize the hot cache");
+    println!("    biodex --cache-all-rich   # Long-running resumable rich cache sweep");
 }
 
 async fn run_full_import() -> Result<(), Box<dyn std::error::Error>> {
@@ -222,7 +222,7 @@ async fn run_backbone_import() -> Result<(), Box<dyn std::error::Error>> {
     println!("and import ~3-4 million species/taxa names for offline search.");
     println!();
     println!("The database will be stored at:");
-    println!("  ~/.local/share/ncbi_poketext/species_cache.db");
+    println!("  ~/.local/share/biodex/species_cache.db");
     println!();
 
     backbone_import::import_backbone(&db, None::<fn(u64, u64)>).await?;
@@ -613,7 +613,7 @@ async fn run_curated_animal_prefetch(
     println!("  Refreshed rows:    {}", refreshed);
     println!("  Failed lookups:    {}", failed);
     println!();
-    println!("Run `ncbi_poketext --audit-animals` for the detailed gap report.");
+    println!("Run `biodex --audit-animals` for the detailed gap report.");
 
     Ok(())
 }
@@ -994,10 +994,10 @@ fn show_database_stats() -> Result<(), Box<dyn std::error::Error>> {
     } else if stats.taxon_names_count > 100_000 {
         println!("Offline search:      AVAILABLE");
         println!("Common names:        NOT AVAILABLE");
-        println!("  Run: ncbi_poketext --import-all");
+        println!("  Run: biodex --import-all");
     } else {
         println!("Offline search:      NOT AVAILABLE");
-        println!("  Run: ncbi_poketext --import-all");
+        println!("  Run: biodex --import-all");
     }
 
     // Show recent history
@@ -1216,7 +1216,7 @@ pub async fn download_species_image(
         .unwrap_or_else(|_| reqwest::Client::new());
     let response = client
         .get(url)
-        .header("User-Agent", "ncbi_poketext/0.1")
+        .header("User-Agent", "biodex/0.1")
         .send()
         .await
         .ok()?;

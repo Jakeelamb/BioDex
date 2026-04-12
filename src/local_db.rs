@@ -14,6 +14,8 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 const SCHEMA_VERSION: i32 = 5;
 const DEFAULT_CACHE_TTL_SECS: i64 = 60 * 60 * 24 * 30; // 30 days
 const MAP_CACHE_VERSION: u32 = 3;
+const APP_DATA_DIR: &str = "biodex";
+const LEGACY_APP_DATA_DIR: &str = "ncbi_poketext";
 
 fn curated_species_sql_filter() -> String {
     let names = CURATED_ANIMAL_SPECIES
@@ -102,10 +104,22 @@ impl LocalDatabase {
     }
 
     fn db_path() -> PathBuf {
-        dirs::data_dir()
-            .unwrap_or_else(|| PathBuf::from("."))
-            .join("ncbi_poketext")
-            .join("species_cache.db")
+        Self::data_root_dir().join("species_cache.db")
+    }
+
+    fn data_root_dir() -> PathBuf {
+        let root = dirs::data_dir().unwrap_or_else(|| PathBuf::from("."));
+        let preferred = root.join(APP_DATA_DIR);
+        if preferred.exists() {
+            return preferred;
+        }
+
+        let legacy = root.join(LEGACY_APP_DATA_DIR);
+        if legacy.exists() {
+            return legacy;
+        }
+
+        preferred
     }
 
     fn configure_connection(conn: &Connection, enable_wal: bool) -> rusqlite::Result<()> {

@@ -21,7 +21,7 @@ pub async fn import_ncbi_taxonomy(db: &LocalDatabase) -> Result<u64, Box<dyn std
     let client = reqwest::Client::new();
     let response = client
         .get(NCBI_TAXDUMP_URL)
-        .header("User-Agent", "ncbi_poketext/0.1")
+        .header("User-Agent", "biodex/0.1")
         .send()
         .await?;
 

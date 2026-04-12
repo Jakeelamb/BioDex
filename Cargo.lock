@@ -172,6 +172,35 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "72b3254f16251a8381aa12e40e3c4d2f0199f8c6508fbecb9d91f575e0fbb8c6"
 
 [[package]]
+name = "biodex"
+version = "0.1.0"
+dependencies = [
+ "ansi-to-tui",
+ "crossterm",
+ "csv",
+ "dirs",
+ "flate2",
+ "futures",
+ "image",
+ "indicatif",
+ "num_cpus",
+ "quick-xml",
+ "ratatui",
+ "ratatui-image",
+ "rayon",
+ "regex",
+ "reqwest",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "tar",
+ "textwrap",
+ "thiserror 2.0.18",
+ "tokio",
+ "urlencoding",
+]
+
+[[package]]
 name = "bit_field"
 version = "0.10.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1406,35 +1435,6 @@ dependencies = [
  "security-framework",
  "security-framework-sys",
  "tempfile",
-]
-
-[[package]]
-name = "ncbi_poketext"
-version = "0.1.0"
-dependencies = [
- "ansi-to-tui",
- "crossterm",
- "csv",
- "dirs",
- "flate2",
- "futures",
- "image",
- "indicatif",
- "num_cpus",
- "quick-xml",
- "ratatui",
- "ratatui-image",
- "rayon",
- "regex",
- "reqwest",
- "rusqlite",
- "serde",
- "serde_json",
- "tar",
- "textwrap",
- "thiserror 2.0.18",
- "tokio",
- "urlencoding",
 ]
 
 [[package]]

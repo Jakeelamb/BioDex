@@ -266,7 +266,7 @@ impl WikipediaClient {
         let response = self
             .client
             .get(&url)
-            .header("User-Agent", "ncbi_poketext/0.1 (biodiversity TUI app)")
+            .header("User-Agent", "biodex/0.1 (biodiversity TUI app)")
             .send()
             .await?;
 
@@ -336,7 +336,7 @@ impl WikipediaClient {
         let response: WikidataSearchResponse = self
             .client
             .get(&url)
-            .header("User-Agent", "ncbi_poketext/0.1 (biodiversity TUI app)")
+            .header("User-Agent", "biodex/0.1 (biodiversity TUI app)")
             .send()
             .await?
             .json()
@@ -359,7 +359,7 @@ impl WikipediaClient {
         let response: WikidataEntityResponse = self
             .client
             .get(&url)
-            .header("User-Agent", "ncbi_poketext/0.1 (biodiversity TUI app)")
+            .header("User-Agent", "biodex/0.1 (biodiversity TUI app)")
             .send()
             .await?
             .json()
@@ -490,7 +490,7 @@ impl WikipediaClient {
         let response: QueryExtractResponse = self
             .client
             .get(&url)
-            .header("User-Agent", "ncbi_poketext/0.1 (biodiversity TUI app)")
+            .header("User-Agent", "biodex/0.1 (biodiversity TUI app)")
             .send()
             .await?
             .json()
@@ -514,7 +514,7 @@ impl WikipediaClient {
         let response: ParseWikitextResponse = self
             .client
             .get(&url)
-            .header("User-Agent", "ncbi_poketext/0.1 (biodiversity TUI app)")
+            .header("User-Agent", "biodex/0.1 (biodiversity TUI app)")
             .send()
             .await?
             .json()
@@ -544,7 +544,7 @@ impl WikipediaClient {
         let response: WikidataEntityResponse = self
             .client
             .get(&url)
-            .header("User-Agent", "ncbi_poketext/0.1 (biodiversity TUI app)")
+            .header("User-Agent", "biodex/0.1 (biodiversity TUI app)")
             .send()
             .await?
             .json()

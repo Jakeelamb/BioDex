@@ -6,6 +6,9 @@ use std::io;
 use std::path::PathBuf;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+const APP_CACHE_DIR: &str = "biodex";
+const LEGACY_APP_CACHE_DIR: &str = "ncbi_poketext";
+
 /// Cache entry wrapper with timestamp
 #[derive(Debug, Serialize, Deserialize)]
 struct CacheEntry<T> {
@@ -28,13 +31,22 @@ impl Cache {
         }
     }
 
-    /// Create a cache in the default location (~/.cache/ncbi_poketext/)
+    /// Create a cache in the default location (~/.cache/biodex/)
     pub fn default_location(ttl_hours: u64) -> io::Result<Self> {
-        let cache_dir = dirs::cache_dir()
-            .ok_or_else(|| {
-                io::Error::new(io::ErrorKind::NotFound, "Could not find cache directory")
-            })?
-            .join("ncbi_poketext");
+        let cache_root = dirs::cache_dir().ok_or_else(|| {
+            io::Error::new(io::ErrorKind::NotFound, "Could not find cache directory")
+        })?;
+        let preferred = cache_root.join(APP_CACHE_DIR);
+        let cache_dir = if preferred.exists() {
+            preferred
+        } else {
+            let legacy = cache_root.join(LEGACY_APP_CACHE_DIR);
+            if legacy.exists() {
+                legacy
+            } else {
+                preferred
+            }
+        };
 
         fs::create_dir_all(&cache_dir)?;
 
@@ -115,7 +127,7 @@ mod tests {
 
     #[test]
     fn test_cache_roundtrip() {
-        let temp_dir = env::temp_dir().join("ncbi_poketext_test_cache");
+        let temp_dir = env::temp_dir().join("biodex_test_cache");
         let cache = Cache::new(temp_dir.clone(), 1);
 
         cache.set("test_key", &"test_value".to_string()).unwrap();
