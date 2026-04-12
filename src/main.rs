@@ -16,12 +16,16 @@ use api::gbif::GbifClient;
 use local_db::{CachedMedia, LocalDatabase};
 use service::{build_local_species_profile, SpeciesService};
 use species::UnifiedSpecies;
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashSet};
 use std::env;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use tui::TuiUpdate;
 
+const DEFAULT_INITIAL_TAXON: &str = "Animalia";
+const HOT_SEED_VERSION_KEY: &str = "hot_seed.version";
+const HOT_SEED_VERSION: &str = "1";
+const HOT_SEED_CONCURRENCY: usize = 3;
 const RICH_CACHE_LAST_KEY: &str = "rich_cache.last_gbif_key";
 const RICH_CACHE_PROCESSED: &str = "rich_cache.processed";
 const RICH_CACHE_ENRICHED: &str = "rich_cache.enriched";
@@ -39,6 +43,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut import_all = false;
     let mut show_stats = false;
     let mut prefetch_mode = false;
+    let mut seed_mode = false;
     let mut prefetch_animals = false;
     let mut audit_animals = false;
     let mut cache_all_rich = false;
@@ -52,6 +57,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             "--import-all" => import_all = true,
             "--stats" | "-s" => show_stats = true,
             "--prefetch" | "-p" => prefetch_mode = true,
+            "--seed" => seed_mode = true,
             "--prefetch-animals" => prefetch_animals = true,
             "--audit-animals" => audit_animals = true,
             "--cache-all-rich" => cache_all_rich = true,
@@ -80,8 +86,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // Handle bulk prefetch
-    if prefetch_mode {
-        return run_bulk_prefetch().await;
+    if prefetch_mode || seed_mode {
+        return run_bulk_prefetch(force_refresh).await;
     }
 
     if prefetch_animals {
@@ -97,7 +103,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     let species_name = if species_parts.is_empty() {
-        "Panthera leo".to_string()
+        DEFAULT_INITIAL_TAXON.to_string()
     } else {
         species_parts.join(" ")
     };
@@ -122,7 +128,8 @@ fn print_help() {
     println!("    -t, --text              Text-only output (no TUI)");
     println!("    --import-all            Download ALL taxonomy data for maximum offline speed");
     println!("    --import-backbone       Download GBIF backbone for offline search (~200MB)");
-    println!("    -p, --prefetch          Bulk prefetch popular species for instant access");
+    println!("    -p, --prefetch          Seed the hot cache for default browsing species");
+    println!("    --seed                  Alias for --prefetch");
     println!("    --prefetch-animals      Refresh curated Animalia candidates and cache media");
     println!("    --audit-animals         Audit curated Animalia completeness");
     println!("    --force-refresh         Re-fetch all rows for a prefetch command");
@@ -142,9 +149,10 @@ fn print_help() {
     println!("    q, Esc                  Quit/close panel");
     println!();
     println!("EXAMPLES:");
-    println!("    ncbi_poketext                    # Default: Panthera leo");
+    println!("    ncbi_poketext                    # Default: Animalia");
     println!("    ncbi_poketext \"Homo sapiens\"     # Search for humans");
     println!("    ncbi_poketext --import-backbone  # Download offline search data");
+    println!("    ncbi_poketext --prefetch         # Materialize the hot cache");
     println!("    ncbi_poketext --cache-all-rich   # Long-running resumable rich cache sweep");
 }
 
@@ -225,80 +233,262 @@ async fn run_backbone_import() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-async fn run_bulk_prefetch() -> Result<(), Box<dyn std::error::Error>> {
+#[derive(Debug)]
+struct HotSeedAuditRow {
+    gaps: Vec<&'static str>,
+}
+
+#[derive(Debug)]
+struct HotSeedRefreshOutcome {
+    requested_name: String,
+    scientific_name: Option<String>,
+    ready: bool,
+    failed: bool,
+    gaps: Vec<&'static str>,
+}
+
+#[derive(Debug, Default)]
+struct HotSeedSummary {
+    total: usize,
+    ready: usize,
+    refreshed: usize,
+    failed: usize,
+    media_missing: usize,
+}
+
+async fn run_bulk_prefetch(force_refresh: bool) -> Result<(), Box<dyn std::error::Error>> {
     use indicatif::{ProgressBar, ProgressStyle};
 
-    println!("=== Bulk Species Prefetch ===");
+    println!("=== Hot Cache Seed ===");
     println!();
-    println!("This will cache popular species for instant access.");
-    println!("The process fetches data from multiple APIs and may take a while.");
+    println!("This materializes the default browsing pack for instant opens.");
+    println!("It covers the startup taxonomy, the demo species set, and the curated animals pack.");
     println!();
 
     let service = Arc::new(SpeciesService::new()?);
     let gbif = Arc::new(GbifClient::new());
+    let species_names = hot_seed_species_names();
+    let total = species_names.len();
 
-    // Popular species across different taxonomic groups
-    let popular_species = demo::DEMO_SPECIES;
-
-    let total = popular_species.len();
     let pb = ProgressBar::new(total as u64);
-    pb.set_style(ProgressStyle::default_bar()
-        .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} ({eta}) {msg}")
-        .unwrap()
-        .progress_chars("#>-"));
+    pb.set_style(
+        ProgressStyle::default_bar()
+            .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} {msg}")
+            .unwrap()
+            .progress_chars("#>-"),
+    );
 
-    let mut cached = 0;
-    let mut failed = 0;
+    let summary =
+        run_hot_seed_sweep(service.clone(), gbif, force_refresh, Some(pb.clone()), true).await;
 
-    // Process in batches of 3 for parallel fetching (respects API rate limits)
-    for chunk in popular_species.chunks(3) {
-        let mut handles = Vec::new();
-
-        for &species_name in chunk {
-            let svc = service.clone();
-            let gb = gbif.clone();
-            let name = species_name.to_string();
-            handles.push(tokio::spawn(async move {
-                match svc.lookup(&name).await {
-                    Ok(species) => {
-                        let _ = tokio::join!(
-                            download_species_image(&species, &svc),
-                            download_map_image(&gb, &species, &svc),
-                        );
-                        true
-                    }
-                    Err(_) => false,
-                }
-            }));
-        }
-
-        // Wait for batch to complete
-        for (i, handle) in handles.into_iter().enumerate() {
-            if let Ok(success) = handle.await {
-                if success {
-                    cached += 1;
-                } else {
-                    failed += 1;
-                }
-            }
-            pb.set_message(chunk.get(i).unwrap_or(&"").to_string());
-            pb.inc(1);
-        }
-
-        // Small delay between batches to respect rate limits
-        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-    }
-
-    pb.finish_with_message("Done!");
+    pb.finish_with_message(format!(
+        "ready={} refreshed={} failed={}",
+        summary.ready, summary.refreshed, summary.failed
+    ));
 
     println!();
-    println!("Prefetch complete:");
-    println!("  Cached: {} species", cached);
-    println!("  Failed: {} species", failed);
+    println!("Hot seed complete:");
+    println!("  Target rows:      {}", summary.total);
+    println!("  Ready now:        {}", summary.ready);
+    println!("  Refreshed rows:   {}", summary.refreshed);
+    println!("  Failed lookups:   {}", summary.failed);
+    println!("  Missing media:    {}", summary.media_missing);
     println!();
-    println!("These species and any available media will now load from cache in the TUI.");
+    println!("The default taxonomy view and hot species pack should now open from cache.");
 
     Ok(())
+}
+
+fn hot_seed_species_names() -> Vec<&'static str> {
+    let mut seen = HashSet::new();
+    let mut names = Vec::new();
+
+    for name in std::iter::once(DEFAULT_INITIAL_TAXON)
+        .chain(demo::DEMO_SPECIES.iter().copied())
+        .chain(curated_animals::CURATED_ANIMAL_SPECIES.iter().copied())
+    {
+        if seen.insert(name.to_ascii_lowercase()) {
+            names.push(name);
+        }
+    }
+
+    names
+}
+
+async fn run_hot_seed_sweep(
+    service: Arc<SpeciesService>,
+    gbif: Arc<GbifClient>,
+    force_refresh: bool,
+    progress: Option<indicatif::ProgressBar>,
+    persist_version: bool,
+) -> HotSeedSummary {
+    use futures::{stream, StreamExt};
+
+    let species_names = hot_seed_species_names();
+    let mut ready = 0usize;
+    let mut to_refresh: Vec<String> = Vec::new();
+
+    if force_refresh {
+        to_refresh.extend(species_names.iter().map(|name| (*name).to_string()));
+    } else {
+        for &requested_name in &species_names {
+            let audit = audit_hot_seed_entry(&service, requested_name).await;
+            if audit.gaps.is_empty() {
+                ready += 1;
+            } else {
+                to_refresh.push(requested_name.to_string());
+            }
+        }
+    }
+
+    if let Some(pb) = progress.as_ref() {
+        pb.set_position(ready as u64);
+        pb.set_message(format!(
+            "cache hits={} refreshing={}",
+            ready,
+            to_refresh.len()
+        ));
+    }
+
+    let refresh_stream = stream::iter(to_refresh.into_iter().map(|requested_name| {
+        let service = service.clone();
+        let gbif = gbif.clone();
+        async move { refresh_hot_seed_entry(service, gbif, requested_name, force_refresh).await }
+    }))
+    .buffer_unordered(HOT_SEED_CONCURRENCY);
+
+    tokio::pin!(refresh_stream);
+
+    let mut refreshed = 0usize;
+    let mut failed = 0usize;
+    let mut media_missing = 0usize;
+
+    while let Some(outcome) = refresh_stream.next().await {
+        if outcome.failed {
+            failed += 1;
+            if let Some(pb) = progress.as_ref() {
+                pb.set_message(format!("failed {}", outcome.requested_name));
+                pb.inc(1);
+            }
+            continue;
+        }
+
+        refreshed += 1;
+        if outcome.ready {
+            ready += 1;
+        }
+        if outcome
+            .gaps
+            .iter()
+            .any(|gap| *gap == "local-image" || *gap == "local-map")
+        {
+            media_missing += 1;
+        }
+
+        if let Some(pb) = progress.as_ref() {
+            let label = outcome
+                .scientific_name
+                .as_deref()
+                .unwrap_or(&outcome.requested_name);
+            pb.set_message(format!(
+                "ready={} {}{}",
+                ready,
+                label,
+                if outcome.gaps.is_empty() {
+                    ""
+                } else {
+                    " media pending"
+                }
+            ));
+            pb.inc(1);
+        }
+    }
+
+    service.flush_cache_writes().await;
+
+    if persist_version {
+        if failed == 0 {
+            service
+                .set_user_stat(HOT_SEED_VERSION_KEY, HOT_SEED_VERSION)
+                .await;
+        } else {
+            service.delete_user_stat(HOT_SEED_VERSION_KEY).await;
+        }
+    }
+
+    HotSeedSummary {
+        total: species_names.len(),
+        ready,
+        refreshed,
+        failed,
+        media_missing,
+    }
+}
+
+async fn audit_hot_seed_entry(service: &SpeciesService, requested_name: &str) -> HotSeedAuditRow {
+    match service.get_cached_with_images(requested_name).await {
+        Some(cached) => HotSeedAuditRow {
+            gaps: hot_seed_gaps(
+                &cached.species,
+                &CachedMedia {
+                    species_image: cached.species_image,
+                    map_image: cached.map_image,
+                },
+            ),
+        },
+        None => HotSeedAuditRow {
+            gaps: vec!["profile"],
+        },
+    }
+}
+
+async fn refresh_hot_seed_entry(
+    service: Arc<SpeciesService>,
+    gbif: Arc<GbifClient>,
+    requested_name: String,
+    force_refresh: bool,
+) -> HotSeedRefreshOutcome {
+    match service
+        .lookup_with_options(&requested_name, force_refresh)
+        .await
+    {
+        Ok(species) => {
+            let _ = tokio::join!(
+                download_species_image(&species, &service),
+                download_map_image(&gbif, &species, &service),
+            );
+            service.flush_cache_writes().await;
+
+            let audit = audit_hot_seed_entry(&service, &requested_name).await;
+            HotSeedRefreshOutcome {
+                requested_name,
+                scientific_name: Some(species.scientific_name),
+                ready: audit.gaps.is_empty(),
+                failed: false,
+                gaps: audit.gaps,
+            }
+        }
+        Err(_) => HotSeedRefreshOutcome {
+            requested_name,
+            scientific_name: None,
+            ready: false,
+            failed: true,
+            gaps: vec!["profile"],
+        },
+    }
+}
+
+fn hot_seed_gaps(species: &UnifiedSpecies, media: &CachedMedia) -> Vec<&'static str> {
+    let mut gaps = Vec::new();
+
+    if species.preferred_image_url().is_some() && media.species_image.is_none() {
+        gaps.push("local-image");
+    }
+    if species.ids.gbif_key.is_some() && media.map_image.is_none() {
+        gaps.push("local-map");
+    }
+
+    gaps
 }
 
 #[derive(Debug)]
@@ -919,6 +1109,8 @@ async fn run_tui_mode(
     );
     crate::perf::log_elapsed("tui.startup_meta", meta_span);
 
+    spawn_hot_seed_background(service.clone(), gbif.clone());
+
     // Create channel for TUI updates
     let (update_tx, update_rx) = mpsc::channel::<TuiUpdate>(32);
 
@@ -941,6 +1133,19 @@ async fn run_tui_mode(
     .await;
     crate::perf::log_elapsed("tui.startup_total", startup_span);
     result
+}
+
+fn spawn_hot_seed_background(service: Arc<SpeciesService>, gbif: Arc<GbifClient>) {
+    tokio::spawn(async move {
+        if service.get_user_stat(HOT_SEED_VERSION_KEY).await.as_deref() == Some(HOT_SEED_VERSION) {
+            return;
+        }
+
+        let summary = run_hot_seed_sweep(service, gbif, false, None, true).await;
+        crate::perf::log_value("hot_seed.ready", summary.ready);
+        crate::perf::log_value("hot_seed.refreshed", summary.refreshed);
+        crate::perf::log_value("hot_seed.failed", summary.failed);
+    });
 }
 
 pub async fn load_cached_media(
