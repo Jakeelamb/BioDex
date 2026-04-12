@@ -879,27 +879,45 @@ async fn run_tui_mode(
     println!("Loading {}...", initial_name);
 
     let lookup_span = crate::perf::start_span();
-    let species = match service.lookup(initial_name).await {
-        Ok(s) => {
+    let (species, species_image, map_image) =
+        if let Some(cached) = service.get_cached_with_images(initial_name).await {
+            let species = cached.species;
+            let (species_image, map_image) = decode_cached_media(
+                &service,
+                &species,
+                CachedMedia {
+                    species_image: cached.species_image,
+                    map_image: cached.map_image,
+                },
+            )
+            .await;
+            crate::perf::log_value("tui.startup.cached_species_hit", &species.scientific_name);
             crate::perf::log_elapsed("tui.lookup_total", lookup_span);
-            s
-        }
-        Err(e) => {
-            crate::perf::log_elapsed("tui.lookup_total", lookup_span);
-            eprintln!("Error: Species not found: {}", initial_name);
-            eprintln!("{}", e);
-            return Ok(());
-        }
-    };
+            (species, species_image, map_image)
+        } else {
+            let species = match service.lookup(initial_name).await {
+                Ok(s) => s,
+                Err(e) => {
+                    crate::perf::log_elapsed("tui.lookup_total", lookup_span);
+                    eprintln!("Error: Species not found: {}", initial_name);
+                    eprintln!("{}", e);
+                    return Ok(());
+                }
+            };
 
-    // Start from local media cache so the TUI can open before network fetches finish.
-    let media_span = crate::perf::start_span();
-    let ((species_image, map_image), is_favorite, has_offline_search) = tokio::join!(
-        load_cached_media(&service, &species),
+            crate::perf::log_elapsed("tui.lookup_total", lookup_span);
+            let media_span = crate::perf::start_span();
+            let (species_image, map_image) = load_cached_media(&service, &species).await;
+            crate::perf::log_elapsed("tui.initial_media_cache", media_span);
+            (species, species_image, map_image)
+        };
+
+    let meta_span = crate::perf::start_span();
+    let (is_favorite, has_offline_search) = tokio::join!(
         service.is_favorite(&species.scientific_name),
         service.has_offline_search(),
     );
-    crate::perf::log_elapsed("tui.initial_media_cache", media_span);
+    crate::perf::log_elapsed("tui.startup_meta", meta_span);
 
     // Create channel for TUI updates
     let (update_tx, update_rx) = mpsc::channel::<TuiUpdate>(32);
@@ -931,7 +949,16 @@ pub async fn load_cached_media(
 ) -> (Option<image::DynamicImage>, Option<image::DynamicImage>) {
     let cache_span = crate::perf::start_span();
     let cached = service.get_cached_media(species).await;
+    let decoded = decode_cached_media(service, species, cached).await;
+    crate::perf::log_elapsed("image.cached_media_lookup", cache_span);
+    decoded
+}
 
+pub async fn decode_cached_media(
+    service: &SpeciesService,
+    species: &UnifiedSpecies,
+    cached: CachedMedia,
+) -> (Option<image::DynamicImage>, Option<image::DynamicImage>) {
     let species_image = cached
         .species_image
         .and_then(|data| image::load_from_memory(&data).ok());
@@ -956,7 +983,6 @@ pub async fn load_cached_media(
         None => None,
     };
 
-    crate::perf::log_elapsed("image.cached_media_lookup", cache_span);
     (species_image, map_image)
 }
 

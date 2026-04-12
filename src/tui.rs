@@ -20,7 +20,7 @@ use ratatui::{
         Block, Borders, Clear, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, Wrap,
     },
 };
-use ratatui_image::{picker::Picker, Resize, StatefulImage};
+use ratatui_image::{picker::Picker, protocol::StatefulProtocol, Resize, StatefulImage};
 use std::io::stdout;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -267,8 +267,8 @@ struct RenderState<'a> {
     browser_entries: &'a [SiblingTaxon],
     browser_title: &'a str,
     browser_index: usize,
-    image_state: &'a mut Option<(Picker, DynamicImage)>,
-    map_state: &'a mut Option<(Picker, DynamicImage)>,
+    image_state: &'a mut Option<PortraitImageState>,
+    map_state: &'a mut Option<MapImageState>,
     search_mode: bool,
     search_query: &'a str,
     search_suggestions: Option<&'a [SearchSuggestion]>,
@@ -313,6 +313,52 @@ pub enum TuiUpdate {
     },
 }
 
+struct PortraitImageState {
+    protocol: StatefulProtocol,
+}
+
+impl PortraitImageState {
+    fn new(picker: Picker, image: DynamicImage) -> Self {
+        Self {
+            protocol: picker.new_resize_protocol(image),
+        }
+    }
+}
+
+struct MapImageState {
+    picker: Picker,
+    source: DynamicImage,
+    rendered_area: Option<(u16, u16)>,
+    protocol: StatefulProtocol,
+}
+
+impl MapImageState {
+    fn new(picker: Picker, image: DynamicImage) -> Self {
+        let protocol = picker.new_resize_protocol(image.clone());
+        Self {
+            picker,
+            source: image,
+            rendered_area: None,
+            protocol,
+        }
+    }
+
+    fn protocol_for_area(&mut self, area: Rect) -> &mut StatefulProtocol {
+        let area_size = (area.width, area.height);
+        if self.rendered_area != Some(area_size) {
+            let stretched = crate::world_map::stretch_for_terminal_area(
+                &self.source,
+                area.width,
+                area.height,
+                self.picker.font_size(),
+            );
+            self.protocol = self.picker.new_resize_protocol(stretched);
+            self.rendered_area = Some(area_size);
+        }
+        &mut self.protocol
+    }
+}
+
 /// Main entry point - runs the TUI with background data fetching
 pub async fn run_tui_loop(
     initial: TuiBootstrap,
@@ -354,11 +400,11 @@ pub async fn run_tui_loop(
     let mut image_state = picker
         .as_ref()
         .zip(species_image.as_ref())
-        .map(|(p, i)| (*p, i.clone()));
+        .map(|(p, i)| PortraitImageState::new(*p, i.clone()));
     let mut map_state = picker
         .as_ref()
         .zip(map_image.as_ref())
-        .map(|(p, i)| (*p, i.clone()));
+        .map(|(p, i)| MapImageState::new(*p, i.clone()));
     let mut show_help = false;
     let mut search_mode = false;
     let mut search_query = String::new();
@@ -772,8 +818,14 @@ pub async fn run_tui_loop(
                         if scientific_name == species.scientific_name {
                             species_image = new_img;
                             map_image = new_map;
-                            image_state = picker.as_ref().zip(species_image.as_ref()).map(|(p, i)| (*p, i.clone()));
-                            map_state = picker.as_ref().zip(map_image.as_ref()).map(|(p, i)| (*p, i.clone()));
+                            image_state = picker
+                                .as_ref()
+                                .zip(species_image.as_ref())
+                                .map(|(p, i)| PortraitImageState::new(*p, i.clone()));
+                            map_state = picker
+                                .as_ref()
+                                .zip(map_image.as_ref())
+                                .map(|(p, i)| MapImageState::new(*p, i.clone()));
                         }
                     }
                     Some(TuiUpdate::SiblingsLoaded {
@@ -923,6 +975,38 @@ async fn fetch_species_internal(
     force_refresh: bool,
 ) {
     let fetch_span = crate::perf::start_span();
+    if !force_refresh {
+        if let Some(cached) = service.get_cached_with_images(&name).await {
+            let species = cached.species;
+            let (species_image, map_image) = crate::decode_cached_media(
+                &service,
+                &species,
+                crate::local_db::CachedMedia {
+                    species_image: cached.species_image,
+                    map_image: cached.map_image,
+                },
+            )
+            .await;
+
+            let _ = tx
+                .send(TuiUpdate::SpeciesLoaded {
+                    species: Box::new(species.clone()),
+                    refreshed: false,
+                })
+                .await;
+            let _ = tx
+                .send(TuiUpdate::MediaLoaded {
+                    scientific_name: species.scientific_name.clone(),
+                    species_image,
+                    map_image,
+                })
+                .await;
+            crate::perf::log_value("tui.cached_species_open", &species.scientific_name);
+            crate::perf::log_elapsed("tui.fetch_species_open", fetch_span);
+            return;
+        }
+    }
+
     match service.lookup_with_options(&name, force_refresh).await {
         Ok(new_species) => {
             let _ = tx
@@ -1830,8 +1914,8 @@ fn render_image_panel(
     frame: &mut Frame,
     area: Rect,
     species: &UnifiedSpecies,
-    image_state: &mut Option<(Picker, DynamicImage)>,
-    map_state: &mut Option<(Picker, DynamicImage)>,
+    image_state: &mut Option<PortraitImageState>,
+    map_state: &mut Option<MapImageState>,
     is_favorite: bool,
 ) {
     let block = Block::default()
@@ -1860,16 +1944,15 @@ fn render_portrait_view(
     frame: &mut Frame,
     area: Rect,
     species: &UnifiedSpecies,
-    image_state: &mut Option<(Picker, DynamicImage)>,
+    image_state: &mut Option<PortraitImageState>,
     is_favorite: bool,
 ) {
     let kingdom_color = get_kingdom_color(&species.taxonomy.kingdom);
     let has_archived_art = preferred_image_info(species).is_some();
 
-    if let Some((ref mut picker, ref img)) = image_state {
+    if let Some(state) = image_state {
         let image_widget = StatefulImage::new().resize(Resize::Fit(None));
-        let mut protocol = picker.new_resize_protocol(img.clone());
-        frame.render_stateful_widget(image_widget, area, &mut protocol);
+        frame.render_stateful_widget(image_widget, area, &mut state.protocol);
     } else {
         render_image_placeholder(
             frame,
@@ -1948,7 +2031,7 @@ fn render_range_strip(
     frame: &mut Frame,
     area: Rect,
     species: &UnifiedSpecies,
-    map_state: &mut Option<(Picker, DynamicImage)>,
+    map_state: &mut Option<MapImageState>,
 ) {
     let title = if !species.distribution.continents.is_empty() {
         format!(
@@ -1972,22 +2055,11 @@ fn render_range_strip(
         return;
     }
 
-    if let Some((ref mut picker, ref img)) = map_state {
+    if let Some(state) = map_state {
         if inner.width >= 10 && inner.height >= 2 {
             let map_widget = StatefulImage::new().resize(Resize::Fit(None));
-            let render_image = if map_image_has_transparency(img) {
-                crate::world_map::composite_with_background(img)
-            } else {
-                img.clone()
-            };
-            let stretched_image = crate::world_map::stretch_for_terminal_area(
-                &render_image,
-                inner.width,
-                inner.height,
-                picker.font_size(),
-            );
-            let mut protocol = picker.new_resize_protocol(stretched_image);
-            frame.render_stateful_widget(map_widget, inner, &mut protocol);
+            let protocol = state.protocol_for_area(inner);
+            frame.render_stateful_widget(map_widget, inner, protocol);
             return;
         }
     }
@@ -2034,9 +2106,7 @@ fn render_stats_panel(frame: &mut Frame, area: Rect, species: &UnifiedSpecies) {
     let footer_reserve = if expanded_meters { 3 } else { 1 };
     let max_meter_rows = inner.height.saturating_sub(footer_reserve);
     let height_limited_count = (max_meter_rows / meter_height).max(1) as usize;
-    let preferred_count = if expanded_meters {
-        5
-    } else if inner.height >= 11 {
+    let preferred_count = if inner.height >= 11 {
         5
     } else if inner.height >= 9 {
         4
@@ -2702,13 +2772,6 @@ fn styled_ascii_atlas_line(row: &str) -> Line<'static> {
     Line::from(spans)
 }
 
-fn map_image_has_transparency(image: &DynamicImage) -> bool {
-    image
-        .as_rgba8()
-        .map(|rgba| rgba.pixels().any(|pixel| pixel.0[3] < 250))
-        .unwrap_or(false)
-}
-
 fn ascii_atlas_style(ch: char) -> Style {
     match ch {
         '#' => Style::default()
@@ -3111,7 +3174,7 @@ fn get_rank_color(rank: &str) -> Color {
     }
 }
 
-fn primary_common_name<'a>(species: &'a UnifiedSpecies) -> Option<&'a str> {
+fn primary_common_name(species: &UnifiedSpecies) -> Option<&str> {
     species
         .common_names
         .iter()
