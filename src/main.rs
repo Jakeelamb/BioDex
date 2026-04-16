@@ -15,7 +15,7 @@ mod world_map;
 use api::gbif::GbifClient;
 use local_db::{CachedMedia, LocalDatabase};
 use service::{build_local_species_profile, SpeciesService};
-use species::UnifiedSpecies;
+use species::{Distribution, ExternalIds, GenomeStats, LifeHistory, Taxonomy, UnifiedSpecies, CURRENT_LIFE_HISTORY_VERSION};
 use std::collections::{BTreeSet, HashSet};
 use std::env;
 use std::sync::Arc;
@@ -1053,6 +1053,11 @@ async fn run_text_mode(
             Ok(())
         }
         Err(e) => {
+            if let Some(species) = bootstrap_taxon_profile(species_name) {
+                crate::perf::log_elapsed("text.lookup_total", lookup_span);
+                print_text_output(&species);
+                return Ok(());
+            }
             crate::perf::log_elapsed("text.lookup_total", lookup_span);
             eprintln!("Error: Species not found: {}", species_name);
             eprintln!("{}", e);
@@ -1088,21 +1093,28 @@ async fn run_tui_mode(
             crate::perf::log_elapsed("tui.lookup_total", lookup_span);
             (species, species_image, map_image)
         } else {
-            let species = match service.lookup(initial_name).await {
-                Ok(s) => s,
+            match service.lookup(initial_name).await {
+                Ok(species) => {
+                    crate::perf::log_elapsed("tui.lookup_total", lookup_span);
+                    let media_span = crate::perf::start_span();
+                    let (species_image, map_image) = load_cached_media(&service, &species).await;
+                    crate::perf::log_elapsed("tui.initial_media_cache", media_span);
+                    (species, species_image, map_image)
+                }
+                Err(_) if initial_name.eq_ignore_ascii_case(DEFAULT_INITIAL_TAXON) => {
+                    let species = bootstrap_taxon_profile(initial_name)
+                        .expect("default initial taxon profile should exist");
+                    crate::perf::log_value("tui.startup.synthetic_taxon", &species.scientific_name);
+                    crate::perf::log_elapsed("tui.lookup_total", lookup_span);
+                    (species, None, None)
+                }
                 Err(e) => {
                     crate::perf::log_elapsed("tui.lookup_total", lookup_span);
                     eprintln!("Error: Species not found: {}", initial_name);
                     eprintln!("{}", e);
                     return Ok(());
                 }
-            };
-
-            crate::perf::log_elapsed("tui.lookup_total", lookup_span);
-            let media_span = crate::perf::start_span();
-            let (species_image, map_image) = load_cached_media(&service, &species).await;
-            crate::perf::log_elapsed("tui.initial_media_cache", media_span);
-            (species, species_image, map_image)
+            }
         };
 
     let meta_span = crate::perf::start_span();
@@ -1136,6 +1148,55 @@ async fn run_tui_mode(
     .await;
     crate::perf::log_elapsed("tui.startup_total", startup_span);
     result
+}
+
+fn bootstrap_taxon_profile(name: &str) -> Option<UnifiedSpecies> {
+    if !name.eq_ignore_ascii_case(DEFAULT_INITIAL_TAXON) {
+        return None;
+    }
+
+    let taxonomy = Taxonomy {
+        kingdom: Some(DEFAULT_INITIAL_TAXON.to_string()),
+        phylum: None,
+        class: None,
+        order: None,
+        family: None,
+        genus: None,
+        division: None,
+        lineage: Vec::new(),
+    };
+    let rank = "KINGDOM".to_string();
+    let scientific_name = DEFAULT_INITIAL_TAXON.to_string();
+    let taxonomy = Taxonomy {
+        lineage: taxonomy.build_display_lineage(&scientific_name, &rank),
+        ..taxonomy
+    };
+
+    Some(UnifiedSpecies {
+        scientific_name,
+        common_names: vec!["Animals".to_string()],
+        rank,
+        taxonomy,
+        ids: ExternalIds::default(),
+        genome: GenomeStats::default(),
+        life_history: LifeHistory {
+            extraction_version: CURRENT_LIFE_HISTORY_VERSION,
+            ..LifeHistory::default()
+        },
+        description: Some(
+            "Starter kingdom profile used when the local cache is still being warmed."
+                .to_string(),
+        ),
+        wikipedia_extract: None,
+        wikipedia_url: None,
+        conservation_status: None,
+        iucn_status: None,
+        observations_count: None,
+        gbif_occurrences: None,
+        top_countries: Vec::new(),
+        distribution: Distribution::default(),
+        images: Vec::new(),
+    })
 }
 
 fn spawn_hot_seed_background(service: Arc<SpeciesService>, gbif: Arc<GbifClient>) {

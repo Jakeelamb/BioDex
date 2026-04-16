@@ -1894,7 +1894,7 @@ fn render_top_banner(
 
     let left_lines = vec![
         Line::from(vec![
-            badge("FIELD", Color::Black, ACCENT_YELLOW),
+            badge("BIODEX", Color::Black, ACCENT_YELLOW),
             Span::raw(" "),
             Span::styled(
                 trim_for_line(display_name, cols[0].width.saturating_sub(10) as usize),
