@@ -8,13 +8,14 @@ use crate::curated_animals::CURATED_ANIMAL_SPECIES;
 use crate::species::UnifiedSpecies;
 use rusqlite::{params, Connection, OptionalExtension};
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 const SCHEMA_VERSION: i32 = 5;
 const DEFAULT_CACHE_TTL_SECS: i64 = 60 * 60 * 24 * 30; // 30 days
 const MAP_CACHE_VERSION: u32 = 3;
 const APP_DATA_DIR: &str = "biodex";
+const LEGACY_APP_DATA_DIR: &str = "ncbi_poketext";
 
 fn curated_species_sql_filter() -> String {
     let names = CURATED_ANIMAL_SPECIES
@@ -72,6 +73,7 @@ pub struct DatabaseStats {
 
 impl LocalDatabase {
     pub fn open() -> rusqlite::Result<Self> {
+        Self::migrate_legacy_data_dir_if_needed();
         let db_path = Self::db_path();
 
         // Ensure parent directory exists
@@ -106,10 +108,97 @@ impl LocalDatabase {
         Self::data_root_dir().join("species_cache.db")
     }
 
+    fn legacy_db_path() -> PathBuf {
+        Self::legacy_data_root_dir().join("species_cache.db")
+    }
+
     fn data_root_dir() -> PathBuf {
         dirs::data_dir()
             .unwrap_or_else(|| PathBuf::from("."))
             .join(APP_DATA_DIR)
+    }
+
+    fn legacy_data_root_dir() -> PathBuf {
+        dirs::data_dir()
+            .unwrap_or_else(|| PathBuf::from("."))
+            .join(LEGACY_APP_DATA_DIR)
+    }
+
+    fn migrate_legacy_data_dir_if_needed() {
+        let current_root = Self::data_root_dir();
+        let legacy_root = Self::legacy_data_root_dir();
+        let current_db = Self::db_path();
+        let legacy_db = Self::legacy_db_path();
+
+        if !legacy_db.exists() {
+            return;
+        }
+
+        if Self::db_has_cached_content(&current_db) || !Self::db_has_cached_content(&legacy_db) {
+            return;
+        }
+
+        if current_root.exists() && !Self::dir_can_be_replaced(&current_root, &current_db) {
+            return;
+        }
+
+        if current_root.exists() {
+            let _ = std::fs::remove_dir_all(&current_root);
+        }
+
+        if let Some(parent) = current_root.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+
+        if std::fs::rename(&legacy_root, &current_root).is_ok() {
+            return;
+        }
+
+        let _ = std::fs::create_dir_all(&current_root);
+        let _ = std::fs::copy(&legacy_db, &current_db);
+        for suffix in ["-wal", "-shm"] {
+            let legacy_sidecar = PathBuf::from(format!("{}{}", legacy_db.display(), suffix));
+            let current_sidecar = PathBuf::from(format!("{}{}", current_db.display(), suffix));
+            if legacy_sidecar.exists() {
+                let _ = std::fs::copy(legacy_sidecar, current_sidecar);
+            }
+        }
+    }
+
+    fn dir_can_be_replaced(dir: &Path, current_db: &Path) -> bool {
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return false;
+        };
+
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path == current_db {
+                continue;
+            }
+            return false;
+        }
+
+        true
+    }
+
+    fn db_has_cached_content(path: &Path) -> bool {
+        if !path.exists() {
+            return false;
+        }
+
+        let Ok(conn) = Connection::open(path) else {
+            return false;
+        };
+
+        for table in ["species", "rich_species", "taxon_names", "images"] {
+            let sql = format!("SELECT COUNT(*) FROM {table}");
+            let count: rusqlite::Result<i64> = conn.query_row(&sql, [], |row| row.get(0));
+            if count.unwrap_or(0) > 0 {
+                return true;
+            }
+        }
+
+        false
     }
 
     fn configure_connection(conn: &Connection, enable_wal: bool) -> rusqlite::Result<()> {

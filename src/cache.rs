@@ -3,10 +3,11 @@
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::fs;
 use std::io;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 const APP_CACHE_DIR: &str = "biodex";
+const LEGACY_APP_CACHE_DIR: &str = "ncbi_poketext";
 
 /// Cache entry wrapper with timestamp
 #[derive(Debug, Serialize, Deserialize)]
@@ -32,11 +33,13 @@ impl Cache {
 
     /// Create a cache in the default location (~/.cache/biodex/)
     pub fn default_location(ttl_hours: u64) -> io::Result<Self> {
-        let cache_dir = dirs::cache_dir()
-            .ok_or_else(|| {
-                io::Error::new(io::ErrorKind::NotFound, "Could not find cache directory")
-            })?
-            .join(APP_CACHE_DIR);
+        let cache_root = dirs::cache_dir().ok_or_else(|| {
+            io::Error::new(io::ErrorKind::NotFound, "Could not find cache directory")
+        })?;
+        let cache_dir = cache_root.join(APP_CACHE_DIR);
+        let legacy_cache_dir = cache_root.join(LEGACY_APP_CACHE_DIR);
+
+        migrate_legacy_cache_dir_if_needed(&legacy_cache_dir, &cache_dir)?;
 
         fs::create_dir_all(&cache_dir)?;
 
@@ -108,6 +111,32 @@ impl Cache {
             .collect();
         self.cache_dir.join(format!("{}.json", safe_key))
     }
+}
+
+fn migrate_legacy_cache_dir_if_needed(legacy_dir: &Path, current_dir: &Path) -> io::Result<()> {
+    if !legacy_dir.exists() || current_dir_has_files(current_dir)? {
+        return Ok(());
+    }
+
+    if current_dir.exists() {
+        fs::remove_dir_all(current_dir)?;
+    }
+
+    match fs::rename(legacy_dir, current_dir) {
+        Ok(()) => Ok(()),
+        Err(_) => {
+            fs::create_dir_all(current_dir)?;
+            Ok(())
+        }
+    }
+}
+
+fn current_dir_has_files(path: &Path) -> io::Result<bool> {
+    if !path.exists() {
+        return Ok(false);
+    }
+
+    Ok(fs::read_dir(path)?.next().is_some())
 }
 
 #[cfg(test)]
