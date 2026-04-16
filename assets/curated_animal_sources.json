@@ -6927,6 +6927,13 @@
       "common_names": [
         "Greenland shark"
       ],
+      "images": [
+        {
+          "attribution": "NOAA Okeanos Explorer Program (public domain, via Wikimedia Commons)",
+          "source": "Wikimedia Commons",
+          "url": "https://commons.wikimedia.org/wiki/Special:FilePath/Somniosus%20microcephalus%20okeanos.jpg"
+        }
+      ],
       "genome": {
         "assembly_accession": null,
         "assembly_level": "Chromosome",

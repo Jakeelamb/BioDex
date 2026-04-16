@@ -1,4 +1,4 @@
-use crate::species::{UnifiedSpecies, CURRENT_LIFE_HISTORY_VERSION};
+use crate::species::{ImageInfo, UnifiedSpecies, CURRENT_LIFE_HISTORY_VERSION};
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::sync::OnceLock;
@@ -125,11 +125,20 @@ struct CuratedAnimalSourceRecord {
     #[serde(default)]
     common_names: Vec<String>,
     #[serde(default)]
+    images: Vec<CuratedAnimalImage>,
+    #[serde(default)]
     taxonomy: CuratedAnimalTaxonomy,
     #[serde(default)]
     life_history: CuratedAnimalLifeHistory,
     #[serde(default)]
     genome: CuratedAnimalGenome,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct CuratedAnimalImage {
+    url: String,
+    source: String,
+    attribution: Option<String>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -203,6 +212,20 @@ pub fn apply_curated_animal_supplement(species: &mut UnifiedSpecies) {
             .any(|current| current.eq_ignore_ascii_case(common_name))
         {
             species.common_names.push(common_name.clone());
+        }
+    }
+
+    for image in &supplement.images {
+        if !species
+            .images
+            .iter()
+            .any(|current| current.url == image.url)
+        {
+            species.images.push(ImageInfo {
+                url: image.url.clone(),
+                source: image.source.clone(),
+                attribution: image.attribution.clone(),
+            });
         }
     }
 
@@ -287,5 +310,46 @@ pub fn apply_curated_animal_supplement(species: &mut UnifiedSpecies) {
             || !species.life_history.reproduction_modes.is_empty())
     {
         species.life_history.extraction_version = CURRENT_LIFE_HISTORY_VERSION;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::apply_curated_animal_supplement;
+    use crate::species::{
+        Distribution, ExternalIds, GenomeStats, LifeHistory, Taxonomy, UnifiedSpecies,
+    };
+
+    #[test]
+    fn curated_supplement_can_add_species_images() {
+        let mut species = UnifiedSpecies {
+            scientific_name: "Somniosus microcephalus (Bloch & Schneider, 1801)".to_string(),
+            common_names: Vec::new(),
+            rank: "species".to_string(),
+            taxonomy: Taxonomy::default(),
+            ids: ExternalIds::default(),
+            genome: GenomeStats::default(),
+            life_history: LifeHistory::default(),
+            description: None,
+            wikipedia_extract: None,
+            wikipedia_url: None,
+            conservation_status: None,
+            iucn_status: None,
+            observations_count: None,
+            gbif_occurrences: None,
+            top_countries: Vec::new(),
+            distribution: Distribution::default(),
+            images: Vec::new(),
+        };
+
+        apply_curated_animal_supplement(&mut species);
+
+        assert!(
+            species
+                .images
+                .iter()
+                .any(|image| image.source == "Wikimedia Commons"),
+            "expected curated image fallback to be attached",
+        );
     }
 }
