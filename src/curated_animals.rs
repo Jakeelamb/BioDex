@@ -105,7 +105,7 @@ pub const CURATED_ANIMAL_SPECIES: &[&str] = &[
     "Lepisosteus oculatus",
     "Oncorhynchus mykiss",
     "Esox lucius",
-    "Scyliorhinus canicula",
+    "Somniosus microcephalus (Bloch & Schneider, 1801)",
     "Sparus aurata",
     // Non-chordates
     "Homarus americanus",

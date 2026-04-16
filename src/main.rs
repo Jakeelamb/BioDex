@@ -15,7 +15,10 @@ mod world_map;
 use api::gbif::GbifClient;
 use local_db::{CachedMedia, LocalDatabase};
 use service::{build_local_species_profile, SpeciesService};
-use species::{Distribution, ExternalIds, GenomeStats, LifeHistory, Taxonomy, UnifiedSpecies, CURRENT_LIFE_HISTORY_VERSION};
+use species::{
+    Distribution, ExternalIds, GenomeStats, LifeHistory, Taxonomy, UnifiedSpecies,
+    CURRENT_LIFE_HISTORY_VERSION,
+};
 use std::collections::{BTreeSet, HashSet};
 use std::env;
 use std::sync::Arc;
@@ -742,7 +745,7 @@ fn curated_animal_gaps(species: &UnifiedSpecies, media: &CachedMedia) -> Vec<&'s
     if !life_history_complete(species) {
         gaps.push("life-history");
     }
-    if !genome_data_complete(species) {
+    if !genome_size_complete(species) {
         gaps.push("genome");
     }
     if species.images.is_empty() {
@@ -769,17 +772,8 @@ fn life_history_complete(species: &UnifiedSpecies) -> bool {
         && !life.reproduction_modes.is_empty()
 }
 
-fn genome_data_complete(species: &UnifiedSpecies) -> bool {
-    let genome = &species.genome;
-    genome.assembly_accession.is_some()
-        || genome.assembly_name.is_some()
-        || genome.genome_size_bp.is_some()
-        || genome.chromosome_count.is_some()
-        || genome.scaffold_count.is_some()
-        || genome.contig_count.is_some()
-        || genome.coding_genes.is_some()
-        || genome.noncoding_genes.is_some()
-        || genome.mito_genome_size_bp.is_some()
+fn genome_size_complete(species: &UnifiedSpecies) -> bool {
+    species.genome.genome_size_bp.is_some()
 }
 
 fn print_curated_animal_audit(rows: &[AnimalAuditRow]) {
@@ -1184,8 +1178,7 @@ fn bootstrap_taxon_profile(name: &str) -> Option<UnifiedSpecies> {
             ..LifeHistory::default()
         },
         description: Some(
-            "Starter kingdom profile used when the local cache is still being warmed."
-                .to_string(),
+            "Starter kingdom profile used when the local cache is still being warmed.".to_string(),
         ),
         wikipedia_extract: None,
         wikipedia_url: None,

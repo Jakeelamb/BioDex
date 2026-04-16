@@ -49,6 +49,7 @@ struct AssemblyInfo {
     assembly_name: Option<String>,
     assembly_accession: Option<String>,
     genebuild_last_geneset_update: Option<String>,
+    golden_path: Option<u64>,
     #[serde(default)]
     top_level_region: Vec<TopLevelRegion>,
 }
@@ -105,13 +106,9 @@ impl EnsemblClient {
 
         let assembly: AssemblyInfo = response.json().await?;
 
-        // Calculate total base pairs from top level regions
-        let total_bp: u64 = assembly
-            .top_level_region
-            .iter()
-            .filter(|r| r.coord_system == "chromosome")
-            .map(|r| r.length)
-            .sum();
+        // Ensembl commonly reports the assembled span directly as golden_path.
+        // Fall back to summing assembled top-level regions when it is absent.
+        let total_bp = assembled_base_pairs(&assembly);
 
         // Get gene statistics
         let gene_stats = self.get_gene_stats(&species_id).await.unwrap_or_default();
@@ -124,11 +121,11 @@ impl EnsemblClient {
             db_version: None,
             genebuild: assembly.genebuild_last_geneset_update,
             taxonomy_id: None,
-            base_pairs: if total_bp > 0 { Some(total_bp) } else { None },
+            base_pairs: total_bp,
             coding_genes: gene_stats.0,
             noncoding_genes: gene_stats.1,
             pseudogenes: gene_stats.2,
-            golden_path: Some(total_bp),
+            golden_path: total_bp,
             has_genome_alignments: false,
             has_variations: false,
         })
@@ -229,5 +226,70 @@ impl EnsemblClient {
 impl Default for EnsemblClient {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+fn assembled_base_pairs(assembly: &AssemblyInfo) -> Option<u64> {
+    assembly.golden_path.or_else(|| {
+        let total: u64 = assembly
+            .top_level_region
+            .iter()
+            .filter(|r| matches!(r.coord_system.as_str(), "primary_assembly" | "chromosome"))
+            .map(|r| r.length)
+            .sum();
+        (total > 0).then_some(total)
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{assembled_base_pairs, AssemblyInfo, TopLevelRegion};
+
+    #[test]
+    fn prefers_reported_golden_path() {
+        let assembly = AssemblyInfo {
+            assembly_name: None,
+            assembly_accession: None,
+            genebuild_last_geneset_update: None,
+            golden_path: Some(123),
+            top_level_region: vec![
+                TopLevelRegion {
+                    length: 50,
+                    coord_system: "chromosome".to_string(),
+                },
+                TopLevelRegion {
+                    length: 75,
+                    coord_system: "primary_assembly".to_string(),
+                },
+            ],
+        };
+
+        assert_eq!(assembled_base_pairs(&assembly), Some(123));
+    }
+
+    #[test]
+    fn sums_primary_assembly_regions_when_golden_path_missing() {
+        let assembly = AssemblyInfo {
+            assembly_name: None,
+            assembly_accession: None,
+            genebuild_last_geneset_update: None,
+            golden_path: None,
+            top_level_region: vec![
+                TopLevelRegion {
+                    length: 100,
+                    coord_system: "primary_assembly".to_string(),
+                },
+                TopLevelRegion {
+                    length: 200,
+                    coord_system: "chromosome".to_string(),
+                },
+                TopLevelRegion {
+                    length: 999,
+                    coord_system: "scaffold".to_string(),
+                },
+            ],
+        };
+
+        assert_eq!(assembled_base_pairs(&assembly), Some(300));
     }
 }

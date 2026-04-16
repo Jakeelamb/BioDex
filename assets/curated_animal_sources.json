@@ -6925,6 +6925,45 @@
     },
     {
       "common_names": [
+        "Greenland shark"
+      ],
+      "genome": {
+        "assembly_accession": null,
+        "assembly_level": "Chromosome",
+        "assembly_name": null,
+        "genome_size_bp": 6450000000,
+        "mito_genome_size_bp": null
+      },
+      "life_history": {
+        "height_meters": null,
+        "length_meters": 4.8,
+        "lifespan_years": 272.0,
+        "mass_kilograms": 1000.0,
+        "reproduction_modes": [
+          "Ovoviviparous"
+        ]
+      },
+      "provenance": {
+        "genome": [
+          {
+            "citation": "Sahm et al. 2024, chromosome-level Greenland shark assembly reported at 6.45 Gb",
+            "dataset": "bioRxiv",
+            "url": "https://doi.org/10.1101/2024.09.09.611499"
+          }
+        ]
+      },
+      "scientific_name": "Somniosus microcephalus (Bloch & Schneider, 1801)",
+      "taxonomy": {
+        "class": "Chondrichthyes",
+        "family": "Somniosidae",
+        "genus": "Somniosus",
+        "kingdom": "Animalia",
+        "order": "Squaliformes",
+        "phylum": "Chordata"
+      }
+    },
+    {
+      "common_names": [
         "Gilthead seabream"
       ],
       "genome": {
