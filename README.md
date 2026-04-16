@@ -1,6 +1,8 @@
 # BioDex
 
-BioDex is a terminal-native species atlas with real portraits, range maps, cached taxonomy browsing, and fast offline navigation.
+BioDex is a terminal-native species atlas: part field guide, part taxonomy browser, part cached research notebook.
+
+It opens into a fast three-pane TUI with species portraits, range maps, lineage history, compact biological stats, and two ways to browse: a curated A-Z species list or a taxonomy tree.
 
 ## Demo
 
@@ -8,84 +10,109 @@ BioDex is a terminal-native species atlas with real portraits, range maps, cache
 
 Click the preview to open the full demo clip.
 
-## What It Does
+## Highlights
 
-- Curated 100-species browsing pack with cached local navigation
-- Alphabetical species browser plus taxonomy browser mode
-- Portraits, range maps, and compact stats inside the terminal
-- Offline taxonomy search once the backbone import is present
-- SQLite-backed local cache for repeated browsing without re-fetching
+- Browse a curated 100-species starter pack with local cached data
+- Move through species alphabetically, with auto-loading as you pause on entries
+- Switch into taxonomy mode when you want to explore by kingdom, phylum, class, order, family, genus, and species
+- View portraits, range maps, lineage, genome metadata, conservation status, and life-history stats in one terminal screen
+- Reuse cached SQLite data so repeat browsing stays fast and mostly offline
 
-## Requirements
+## Install
 
-- Rust toolchain
-- An image-capable terminal if you want in-terminal portraits and range maps; otherwise BioDex falls back to text placeholders
-
-## Quick Start
-
-Build and run the optimized binary:
+BioDex is currently built from source.
 
 ```bash
+git clone https://github.com/Jakeelamb/BioDex.git
+cd BioDex
 cargo build --release
+```
+
+Run the optimized binary:
+
+```bash
 ./target/release/biodex
 ```
 
-Open a specific species directly:
+Optionally install it locally so `biodex` is available on your PATH:
+
+```bash
+cargo install --path .
+```
+
+Open a specific species:
 
 ```bash
 ./target/release/biodex "Homo sapiens"
 ```
 
-Run from source without building the release binary first:
+Run from source without keeping a release binary:
 
 ```bash
 cargo run --release -- "Panthera leo"
 ```
 
-Running `biodex` with no arguments opens the TUI at `Animalia`.
+## Requirements
+
+- Rust toolchain
+- A modern terminal
+- An image-capable terminal for portraits and raster range maps; otherwise BioDex falls back to text placeholders
 
 ## Common Commands
 
+The examples below assume `biodex` is on your PATH. If not, use `./target/release/biodex` from the repo root.
+
 - `biodex`: open the TUI at `Animalia`
+- `biodex "Ailuropoda melanoleuca"`: open a species directly
 - `biodex --text "Homo sapiens"`: print species data without launching the TUI
-- `biodex --prefetch`: materialize the default 100-species hot cache
-- `biodex --prefetch-animals`: refresh the curated Animalia candidate set and cache media
-- `biodex --import-backbone`: import the GBIF backbone for offline taxonomy search
-- `biodex --cache-all-rich`: long-running resumable sweep for richer cached species rows
+- `biodex --prefetch`: seed the default 100-species hot cache
+- `biodex --prefetch-animals`: refresh curated Animalia candidates and cache media
+- `biodex --import-backbone`: import the GBIF backbone for offline taxonomy search, roughly 200 MB
+- `biodex --cache-all-rich`: run a long resumable sweep for richer cached species rows
 - `biodex --stats`: show local cache statistics
 
 ## Controls
 
 - `↑/↓` or `j/k`: move through the active navigator
-- `t`: swap between the A-Z species list and taxonomy mode
+- `t`: switch between the A-Z species list and taxonomy browser
 - `Enter` / `l` / `→`: open the selected entry
 - `h` / `←`: move up a taxonomy level
 - `/`: search
-- `r`: refresh live data
+- `r`: refresh from live sources
 - `f`: toggle saved status
 - `?`: help
+- `q` / `Esc`: quit or close the active panel
 
 ## Data Sources
 
-BioDex pulls from a few sources and caches the merged result locally:
+BioDex merges public data from several sources and caches the result locally:
 
 | Source | Used for |
 | --- | --- |
-| GBIF | taxonomy matching, offline backbone import, occurrence counts, continent/range data, raster map overlays |
-| NCBI | taxonomy IDs, lineage, genome metadata when available |
-| iNaturalist | preferred species portraits when available |
-| Wikipedia | summaries and article text used for descriptions and fallback life-history extraction |
-| Wikidata | conservation status, aliases, rank hints, and structured life-history fields |
-| Ensembl | supplementary genome statistics when available |
-| Ollama | optional local pass used to fill missing life-history fields from cached article text |
-| Local curated pack | bundled supplement for the 100-species starter set |
+| GBIF | Taxonomy matching, backbone import, occurrence counts, continent/range data, and raster map overlays |
+| NCBI | Taxonomy IDs, lineage, and genome metadata when available |
+| iNaturalist | Preferred species portraits when available |
+| Wikipedia | Summaries, descriptions, and fallback life-history extraction |
+| Wikidata | Conservation status, aliases, rank hints, and structured life-history fields |
+| Ensembl | Supplementary genome statistics when available |
+| Ollama | Optional local pass to fill missing life-history fields from cached article text |
+| Local curated pack | Starter metadata for the 100-species browsing set |
 
 ## Caching
 
-- BioDex stores its local database and cache under `biodex` app directories.
-- Species rows, portraits, and range maps are cached locally after fetch.
-- The default 100-species browser is designed to feel instant once the hot cache is seeded.
-- Offline taxonomy search depends on the GBIF backbone import.
+BioDex stores its local database and media cache under `biodex` app directories. Species rows, portraits, and range maps are cached after fetch, and the curated browser is designed to feel instant after `biodex --prefetch`.
+
+Offline taxonomy search depends on the GBIF backbone import:
+
+```bash
+biodex --import-backbone
+```
+
+That import is larger than the normal starter cache, but it makes search and taxonomy navigation much more useful without repeated network calls.
+
+## Status
+
+BioDex is early but usable. The current focus is a fast, polished terminal atlas with strong cached browsing. Future directions include broader curated packs, better offline packaging, and an optional nostalgic desktop/window-shell presentation.
 
 ## License
 
