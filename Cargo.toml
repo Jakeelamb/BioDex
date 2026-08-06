@@ -1,11 +1,29 @@
 [package]
 name = "biodex"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
+rust-version = "1.85"
 description = "Terminal-native species atlas with cached images, range maps, and taxonomy browsing"
 repository = "https://github.com/Jakeelamb/BioDex"
+homepage = "https://github.com/Jakeelamb/BioDex"
 readme = "README.md"
 license = "MIT"
+keywords = ["biology", "taxonomy", "species", "tui", "atlas"]
+categories = ["command-line-utilities", "science"]
+include = [
+    "Cargo.toml",
+    "Cargo.lock",
+    "LICENSE",
+    "README.md",
+    "assets/biodex-demo.gif",
+    "assets/biodex-demo.mp4",
+    "assets/biodex.seed.db",
+    "assets/curated_animal_sources.json",
+    "assets/maps/ne_basemap.png",
+    "scripts/build_starter_seed_db.py",
+    "scripts/generate_curated_animal_sources.py",
+    "src/**/*.rs",
+]
 
 [dependencies]
 tokio = { version = "1", features = ["full"] }

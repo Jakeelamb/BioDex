@@ -157,8 +157,8 @@ fn print_help() {
     println!("EXAMPLES:");
     println!("    biodex                    # Default: Animalia");
     println!("    biodex \"Homo sapiens\"     # Search for humans");
+    println!("    biodex --prefetch         # Download starter-pack portraits and maps");
     println!("    biodex --import-backbone  # Download offline search data");
-    println!("    biodex --prefetch         # Materialize the hot cache");
     println!("    biodex --cache-all-rich   # Long-running resumable rich cache sweep");
 }
 

@@ -8,6 +8,7 @@ use crate::curated_animals::CURATED_ANIMAL_SPECIES;
 use crate::species::UnifiedSpecies;
 use rusqlite::{params, Connection, OptionalExtension};
 use std::collections::HashMap;
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -16,6 +17,7 @@ const DEFAULT_CACHE_TTL_SECS: i64 = 60 * 60 * 24 * 30; // 30 days
 const MAP_CACHE_VERSION: u32 = 3;
 const APP_DATA_DIR: &str = "biodex";
 const LEGACY_APP_DATA_DIR: &str = "ncbi_poketext";
+const BUNDLED_SEED_DB: &[u8] = include_bytes!("../assets/biodex.seed.db");
 
 fn curated_species_sql_filter() -> String {
     let names = CURATED_ANIMAL_SPECIES
@@ -78,8 +80,10 @@ impl LocalDatabase {
 
         // Ensure parent directory exists
         if let Some(parent) = db_path.parent() {
-            std::fs::create_dir_all(parent).ok();
+            fs::create_dir_all(parent).ok();
         }
+
+        Self::install_bundled_seed_if_needed(&db_path);
 
         let conn = Connection::open(&db_path)?;
         Self::configure_connection(&conn, true)?;
@@ -199,6 +203,30 @@ impl LocalDatabase {
         }
 
         false
+    }
+
+    fn install_bundled_seed_if_needed(db_path: &Path) {
+        if db_path.exists() || BUNDLED_SEED_DB.is_empty() {
+            return;
+        }
+
+        let Some(parent) = db_path.parent() else {
+            return;
+        };
+
+        if fs::create_dir_all(parent).is_err() {
+            return;
+        }
+
+        let temp_path = parent.join("species_cache.seed.tmp");
+        if fs::write(&temp_path, BUNDLED_SEED_DB).is_err() {
+            let _ = fs::remove_file(&temp_path);
+            return;
+        }
+
+        if fs::rename(&temp_path, db_path).is_err() {
+            let _ = fs::remove_file(&temp_path);
+        }
     }
 
     fn configure_connection(conn: &Connection, enable_wal: bool) -> rusqlite::Result<()> {
@@ -1262,12 +1290,53 @@ impl LocalDatabase {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
 
     #[test]
     fn test_database_creation() {
         let db = LocalDatabase::open_in_memory().unwrap();
         let stats = db.get_stats().unwrap();
         assert_eq!(stats.species_count, 0);
+    }
+
+    #[test]
+    fn installs_bundled_seed_into_missing_database_path() {
+        let unique = format!(
+            "biodex_seed_test_{}_{}",
+            std::process::id(),
+            LocalDatabase::current_timestamp()
+        );
+        let root = std::env::temp_dir().join(unique);
+        let db_path = root.join("species_cache.db");
+
+        if root.exists() {
+            let _ = fs::remove_dir_all(&root);
+        }
+        fs::create_dir_all(&root).unwrap();
+
+        LocalDatabase::install_bundled_seed_if_needed(&db_path);
+        assert!(db_path.exists());
+
+        let conn = Connection::open(&db_path).unwrap();
+        let species_count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM species", [], |row| row.get(0))
+            .unwrap();
+        let rich_species_count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM rich_species", [], |row| row.get(0))
+            .unwrap();
+        let hot_seed_version: String = conn
+            .query_row(
+                "SELECT value FROM user_stats WHERE key = 'hot_seed.version'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+
+        assert_eq!(species_count, CURATED_ANIMAL_SPECIES.len() as i64);
+        assert_eq!(rich_species_count, CURATED_ANIMAL_SPECIES.len() as i64);
+        assert_eq!(hot_seed_version, "1");
+
+        let _ = fs::remove_dir_all(&root);
     }
 
     #[test]

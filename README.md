@@ -12,7 +12,7 @@ Click the preview to open the full demo clip.
 
 ## Highlights
 
-- Browse a curated 100-species starter pack with local cached data
+- Browse a curated 100-species starter pack with bundled local cached profiles
 - Move through species alphabetically, with auto-loading as you pause on entries
 - Switch into taxonomy mode when you want to explore by kingdom, phylum, class, order, family, genus, and species
 - View portraits, range maps, lineage, genome metadata, conservation status, and life-history stats in one terminal screen
@@ -20,7 +20,36 @@ Click the preview to open the full demo clip.
 
 ## Install
 
-BioDex is currently built from source.
+Install from crates.io:
+
+```bash
+cargo install biodex
+```
+
+If your system has a small `/tmp` quota, point Cargo at directories with more space:
+
+```bash
+mkdir -p ~/.cargo-install-tmp ~/.cargo-install-target
+TMPDIR=~/.cargo-install-tmp \
+CARGO_TARGET_DIR=~/.cargo-install-target \
+cargo install biodex
+```
+
+Then run it:
+
+```bash
+biodex
+```
+
+To download portraits and raster range maps for the starter browsing pack after install:
+
+```bash
+biodex --prefetch
+```
+
+That is the simplest one-command way to materialize the default hot cache locally.
+
+Build from source when you want to work on the project locally:
 
 ```bash
 git clone https://github.com/Jakeelamb/BioDex.git
@@ -100,7 +129,19 @@ BioDex merges public data from several sources and caches the result locally:
 
 ## Caching
 
-BioDex stores its local database and media cache under `biodex` app directories. Species rows, portraits, and range maps are cached after fetch, and the curated browser is designed to feel instant after `biodex --prefetch`.
+BioDex stores its local database and media cache under `biodex` app directories.
+
+The published crate ships with a bundled starter SQLite database for the curated 100-species pack, so species profiles and taxonomy browsing are available immediately after install.
+
+Portraits and raster range maps are still cached lazily on demand. They are not bundled into the crate because shipping third-party media would make the package dramatically larger and complicate downstream licensing.
+
+If you want the starter-pack media cached immediately after install, run:
+
+```bash
+biodex --prefetch
+```
+
+This downloads and stores the default browsing pack locally from the upstream public data sources used by BioDex. Those fetched media assets remain subject to the original source terms and attribution requirements; BioDex does not relicense them.
 
 Offline taxonomy search depends on the GBIF backbone import:
 
@@ -108,7 +149,7 @@ Offline taxonomy search depends on the GBIF backbone import:
 biodex --import-backbone
 ```
 
-That import is larger than the normal starter cache, but it makes search and taxonomy navigation much more useful without repeated network calls.
+That import is larger than the bundled starter cache, but it makes search and taxonomy navigation much more useful without repeated network calls.
 
 ## Status
 
