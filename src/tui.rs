@@ -4,7 +4,7 @@
 
 use crate::api::gbif::GbifClient;
 use crate::curated_animals::CURATED_ANIMAL_TARGET;
-use crate::local_db::{CachedMedia, TaxonName};
+use crate::local_db::TaxonName;
 use crate::service::{LookupPolicy, SpeciesService};
 use crate::species::{ImageInfo, UnifiedSpecies};
 use crossterm::{
@@ -22,6 +22,7 @@ use ratatui::{
 };
 use ratatui_image::{picker::Picker, protocol::StatefulProtocol, Resize, StatefulImage};
 use std::borrow::Cow;
+use std::collections::VecDeque;
 use std::io::stdout;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -53,7 +54,8 @@ const ACCENT_MINT: Color = Color::Rgb(144, 172, 162);
 const PANEL_BORDER: Color = Color::Rgb(74, 86, 97);
 
 const SEARCH_DEBOUNCE_DELAY: Duration = Duration::from_millis(140);
-const SPECIES_AUTO_OPEN_DELAY: Duration = Duration::from_millis(120);
+const MEDIA_LOAD_DELAY: Duration = Duration::from_millis(120);
+const MEDIA_VIEW_CACHE_CAPACITY: usize = 3;
 const SEARCH_SUGGESTION_LIMIT: u32 = 50;
 const TAXON_BROWSER_LIMIT: u32 = 500;
 const SPECIES_LIST_LIMIT: u32 = CURATED_ANIMAL_TARGET as u32;
@@ -216,9 +218,21 @@ struct PendingSearch {
     deadline: TokioInstant,
 }
 
-struct PendingSpeciesOpen {
-    name: String,
+struct PendingMediaLoad {
+    species: UnifiedSpecies,
+    request_id: u64,
+    force_refresh: bool,
+    allow_network: bool,
     deadline: TokioInstant,
+}
+
+struct MediaFetchPlan {
+    request_id: u64,
+    force_refresh: bool,
+    had_portrait: bool,
+    had_map: bool,
+    fetch_portrait: bool,
+    fetch_map: bool,
 }
 
 #[derive(Default)]
@@ -268,26 +282,57 @@ impl SearchRuntime {
 }
 
 #[derive(Default)]
-struct SpeciesListRuntime {
-    pending: Option<PendingSpeciesOpen>,
+struct SpeciesLoadRuntime {
+    generation: u64,
+    profile_task: Option<JoinHandle<()>>,
+    media_pending: Option<PendingMediaLoad>,
+    media_task: Option<JoinHandle<()>>,
 }
 
-impl SpeciesListRuntime {
-    fn cancel(&mut self) {
-        self.pending = None;
+impl SpeciesLoadRuntime {
+    fn begin_profile_request(&mut self) -> u64 {
+        self.generation = self.generation.wrapping_add(1);
+        if let Some(handle) = self.profile_task.take() {
+            handle.abort();
+        }
+        self.cancel_media();
+        self.generation
     }
 
-    fn queue(&mut self, selected_name: Option<&str>, current_name: &str) {
-        let Some(name) = selected_name.filter(|name| !name.eq_ignore_ascii_case(current_name))
-        else {
-            self.pending = None;
-            return;
-        };
+    fn accepts(&self, request_id: u64) -> bool {
+        request_id == self.generation
+    }
 
-        self.pending = Some(PendingSpeciesOpen {
-            name: name.to_string(),
-            deadline: TokioInstant::now() + SPECIES_AUTO_OPEN_DELAY,
+    fn queue_media(
+        &mut self,
+        species: UnifiedSpecies,
+        request_id: u64,
+        force_refresh: bool,
+        allow_network: bool,
+    ) {
+        self.cancel_media();
+        self.media_pending = Some(PendingMediaLoad {
+            species,
+            request_id,
+            force_refresh,
+            allow_network,
+            deadline: TokioInstant::now() + MEDIA_LOAD_DELAY,
         });
+    }
+
+    fn cancel_media(&mut self) {
+        self.media_pending = None;
+        if let Some(handle) = self.media_task.take() {
+            handle.abort();
+        }
+    }
+
+    fn cancel_all(&mut self) {
+        self.generation = self.generation.wrapping_add(1);
+        if let Some(handle) = self.profile_task.take() {
+            handle.abort();
+        }
+        self.cancel_media();
     }
 }
 
@@ -332,12 +377,17 @@ pub enum TuiUpdate {
     SpeciesLoaded {
         species: Box<UnifiedSpecies>,
         refreshed: bool,
+        request_id: u64,
     },
     /// Media finished loading for the currently displayed species
     MediaLoaded {
         scientific_name: String,
         species_image: Option<DynamicImage>,
         map_image: Option<DynamicImage>,
+        request_id: u64,
+        complete: bool,
+        replace_portrait: bool,
+        replace_map: bool,
     },
     /// Siblings data loaded
     SiblingsLoaded {
@@ -363,6 +413,7 @@ pub enum TuiUpdate {
         message: String,
         requested_name: String,
         refreshed: bool,
+        request_id: u64,
     },
 }
 
@@ -383,6 +434,49 @@ struct MapImageState {
     source: DynamicImage,
     rendered_area: Option<(u16, u16)>,
     protocol: Option<StatefulProtocol>,
+}
+
+struct MediaViewState {
+    portrait: Option<PortraitImageState>,
+    map: Option<MapImageState>,
+    complete: bool,
+}
+
+struct MediaViewCache {
+    capacity: usize,
+    entries: VecDeque<(String, MediaViewState)>,
+}
+
+impl MediaViewCache {
+    fn new(capacity: usize) -> Self {
+        Self {
+            capacity,
+            entries: VecDeque::with_capacity(capacity),
+        }
+    }
+
+    fn insert(&mut self, name: String, state: MediaViewState) {
+        if self.capacity == 0 {
+            return;
+        }
+        if let Some(index) = self
+            .entries
+            .iter()
+            .position(|(cached_name, _)| cached_name.eq_ignore_ascii_case(&name))
+        {
+            self.entries.remove(index);
+        }
+        self.entries.push_front((name, state));
+        self.entries.truncate(self.capacity);
+    }
+
+    fn take(&mut self, name: &str) -> Option<MediaViewState> {
+        let index = self
+            .entries
+            .iter()
+            .position(|(cached_name, _)| cached_name.eq_ignore_ascii_case(name))?;
+        self.entries.remove(index).map(|(_, state)| state)
+    }
 }
 
 #[derive(Default)]
@@ -486,8 +580,8 @@ pub async fn run_tui_loop(
 
     // Mutable state that can be updated while running
     let mut species = initial.species;
-    let mut species_image = initial.species_image;
-    let mut map_image = initial.map_image;
+    let initial_has_portrait = initial.species_image.is_some();
+    let initial_has_map = initial.map_image.is_some();
     let mut browser_entries: Vec<SiblingTaxon> = Vec::new();
     let mut browser_title = String::from("Loading browser...");
     let mut browser_context: Option<BrowserContext> = None;
@@ -506,14 +600,15 @@ pub async fn run_tui_loop(
         format!("{} ready.", species.scientific_name),
     );
 
-    let mut image_state = picker
-        .as_ref()
-        .zip(species_image.as_ref())
-        .map(|(p, i)| PortraitImageState::new(*p, i.clone()));
-    let mut map_state = picker
-        .as_ref()
-        .zip(map_image.as_ref())
-        .map(|(p, i)| MapImageState::new(*p, i.clone()));
+    let mut image_state = initial
+        .species_image
+        .and_then(|image| picker.map(|p| PortraitImageState::new(p, image)));
+    let mut map_state = initial
+        .map_image
+        .and_then(|image| picker.map(|p| MapImageState::new(p, image)));
+    let mut active_media_complete =
+        media_is_complete(&species, initial_has_portrait, initial_has_map);
+    let mut media_cache = MediaViewCache::new(MEDIA_VIEW_CACHE_CAPACITY);
     let mut ascii_range_cache = AsciiRangeCache::default();
     let mut show_help = false;
     let mut search_mode = false;
@@ -525,7 +620,7 @@ pub async fn run_tui_loop(
     let mut loading = false;
     let mut loading_start = Instant::now();
     let mut search_runtime = SearchRuntime::default();
-    let mut species_list_runtime = SpeciesListRuntime::default();
+    let mut species_runtime = SpeciesLoadRuntime::default();
 
     let mut event_stream = EventStream::new();
     spawn_browser_for_species(update_tx.clone(), service.clone(), species.clone());
@@ -534,14 +629,9 @@ pub async fn run_tui_loop(
         service.clone(),
         selected_species_name(&species),
     );
-    spawn_media_topoff_if_needed(
-        update_tx.clone(),
-        service.clone(),
-        gbif.clone(),
-        species.clone(),
-        species_image.is_none(),
-        map_image.is_none(),
-    );
+    if !active_media_complete {
+        species_runtime.queue_media(species.clone(), 0, false, live_lookup_enabled);
+    }
 
     loop {
         let spinner_frame = if loading {
@@ -598,7 +688,6 @@ pub async fn run_tui_loop(
                             match key.code {
                                 KeyCode::Esc => {
                                     search_runtime.reset();
-                                    species_list_runtime.cancel();
                                     search_mode = false;
                                     search_query.clear();
                                     search_suggestions = None;
@@ -625,7 +714,6 @@ pub async fn run_tui_loop(
                                             .as_deref()
                                             .is_none_or(is_species_rank);
                                         search_runtime.reset();
-                                        species_list_runtime.cancel();
                                         search_mode = false;
                                         search_query.clear();
                                         search_suggestions = None;
@@ -636,20 +724,13 @@ pub async fn run_tui_loop(
                                                 StatusTone::Info,
                                                 format!("Opening {}...", name),
                                             );
-                                            let tx = update_tx.clone();
-                                            let svc = service.clone();
-                                            let gb = gbif.clone();
-                                            tokio::spawn(async move {
-                                                open_taxon_entry(
-                                                    tx,
-                                                    svc,
-                                                    gb,
-                                                    name,
-                                                    selected_rank,
-                                                    lookup_policy,
-                                                )
-                                                .await;
-                                            });
+                                            start_species_request(
+                                                &mut species_runtime,
+                                                update_tx.clone(),
+                                                service.clone(),
+                                                name,
+                                                lookup_policy,
+                                            );
                                         } else if let Some(rank) = selected_rank {
                                             browser_history.clear();
                                             navigator_focus = NavigatorFocus::Taxonomy;
@@ -719,7 +800,6 @@ pub async fn run_tui_loop(
                             }
                             KeyCode::Char('/') => {
                                 search_runtime.reset();
-                                species_list_runtime.cancel();
                                 search_mode = true;
                                 search_query.clear();
                                 search_suggestions = None;
@@ -744,7 +824,6 @@ pub async fn run_tui_loop(
                             KeyCode::Char('b') => {
                                 browser_history.clear();
                                 navigator_focus = NavigatorFocus::Taxonomy;
-                                species_list_runtime.cancel();
                                 loading = true;
                                 loading_start = Instant::now();
                                 status = StatusBanner::new(
@@ -765,11 +844,12 @@ pub async fn run_tui_loop(
                                     StatusTone::Info,
                                     format!("Refreshing {}...", species.scientific_name),
                                 );
-                                spawn_species_refresh(
+                                start_species_request(
+                                    &mut species_runtime,
                                     update_tx.clone(),
                                     service.clone(),
-                                    gbif.clone(),
                                     species.scientific_name.clone(),
+                                    LookupPolicy::Refresh,
                                 );
                             }
                             KeyCode::Char('f') => {
@@ -789,9 +869,6 @@ pub async fn run_tui_loop(
                                     NavigatorFocus::Taxonomy => NavigatorFocus::SpeciesList,
                                     NavigatorFocus::SpeciesList => NavigatorFocus::Taxonomy,
                                 };
-                                if navigator_focus == NavigatorFocus::Taxonomy {
-                                    species_list_runtime.cancel();
-                                }
                                 status = match navigator_focus {
                                     NavigatorFocus::Taxonomy => StatusBanner::new(
                                         StatusTone::Info,
@@ -799,7 +876,7 @@ pub async fn run_tui_loop(
                                     ),
                                     NavigatorFocus::SpeciesList => StatusBanner::new(
                                         StatusTone::Info,
-                                        "A-Z auto-scan active.",
+                                        "A-Z live browse active.",
                                     ),
                                 };
                             }
@@ -818,12 +895,21 @@ pub async fn run_tui_loop(
                                             species_list_index += 1;
                                         }
                                         if species_list_index != previous {
-                                            queue_selected_species_auto_open(
-                                                &mut species_list_runtime,
+                                            if let Some(name) = start_selected_species_request(
+                                                &mut species_runtime,
+                                                update_tx.clone(),
+                                                service.clone(),
                                                 &species_list_entries,
                                                 species_list_index,
-                                                &species.scientific_name,
-                                            );
+                                                lookup_policy,
+                                            ) {
+                                                loading = true;
+                                                loading_start = Instant::now();
+                                                status = StatusBanner::new(
+                                                    StatusTone::Info,
+                                                    format!("Opening {name}..."),
+                                                );
+                                            }
                                         }
                                     }
                                 }
@@ -837,18 +923,26 @@ pub async fn run_tui_loop(
                                         let previous = species_list_index;
                                         species_list_index = species_list_index.saturating_sub(1);
                                         if species_list_index != previous {
-                                            queue_selected_species_auto_open(
-                                                &mut species_list_runtime,
+                                            if let Some(name) = start_selected_species_request(
+                                                &mut species_runtime,
+                                                update_tx.clone(),
+                                                service.clone(),
                                                 &species_list_entries,
                                                 species_list_index,
-                                                &species.scientific_name,
-                                            );
+                                                lookup_policy,
+                                            ) {
+                                                loading = true;
+                                                loading_start = Instant::now();
+                                                status = StatusBanner::new(
+                                                    StatusTone::Info,
+                                                    format!("Opening {name}..."),
+                                                );
+                                            }
                                         }
                                     }
                                 }
                             }
                             KeyCode::Right | KeyCode::Char('l') | KeyCode::Enter => {
-                                species_list_runtime.cancel();
                                 match navigator_focus {
                                     NavigatorFocus::Taxonomy => {
                                         if let Some(entry) = browser_entries.get(browser_index).cloned() {
@@ -859,20 +953,13 @@ pub async fn run_tui_loop(
                                                     StatusTone::Info,
                                                     format!("Opening {}...", entry.name),
                                                 );
-                                                let tx = update_tx.clone();
-                                                let svc = service.clone();
-                                                let gb = gbif.clone();
-                                                tokio::spawn(async move {
-                                                    open_taxon_entry(
-                                                        tx,
-                                                        svc,
-                                                        gb,
-                                                        entry.name,
-                                                        Some(entry.rank),
-                                                        lookup_policy,
-                                                    )
-                                                    .await;
-                                                });
+                                                start_species_request(
+                                                    &mut species_runtime,
+                                                    update_tx.clone(),
+                                                    service.clone(),
+                                                    entry.name,
+                                                    lookup_policy,
+                                                );
                                             } else {
                                                 browser_history.push(BrowserPaneState {
                                                     entries: browser_entries.clone(),
@@ -916,20 +1003,13 @@ pub async fn run_tui_loop(
                                                 StatusTone::Info,
                                                 format!("Opening {}...", entry.name),
                                             );
-                                            let tx = update_tx.clone();
-                                            let svc = service.clone();
-                                            let gb = gbif.clone();
-                                            tokio::spawn(async move {
-                                                open_taxon_entry(
-                                                    tx,
-                                                    svc,
-                                                    gb,
-                                                    entry.name,
-                                                    Some(entry.rank),
-                                                    lookup_policy,
-                                                )
-                                                .await;
-                                            });
+                                            start_species_request(
+                                                &mut species_runtime,
+                                                update_tx.clone(),
+                                                service.clone(),
+                                                entry.name,
+                                                lookup_policy,
+                                            );
                                         } else {
                                             status = StatusBanner::new(
                                                 StatusTone::Warning,
@@ -941,7 +1021,6 @@ pub async fn run_tui_loop(
                             }
                             KeyCode::Left | KeyCode::Char('h') => {
                                 if navigator_focus == NavigatorFocus::SpeciesList {
-                                    species_list_runtime.cancel();
                                     status = StatusBanner::new(
                                         StatusTone::Info,
                                         "A-Z species list active. Press t to swap into taxonomy browsing.",
@@ -991,12 +1070,21 @@ pub async fn run_tui_loop(
                                         let previous = species_list_index;
                                         species_list_index = 0;
                                         if species_list_index != previous {
-                                            queue_selected_species_auto_open(
-                                                &mut species_list_runtime,
+                                            if let Some(name) = start_selected_species_request(
+                                                &mut species_runtime,
+                                                update_tx.clone(),
+                                                service.clone(),
                                                 &species_list_entries,
                                                 species_list_index,
-                                                &species.scientific_name,
-                                            );
+                                                lookup_policy,
+                                            ) {
+                                                loading = true;
+                                                loading_start = Instant::now();
+                                                status = StatusBanner::new(
+                                                    StatusTone::Info,
+                                                    format!("Opening {name}..."),
+                                                );
+                                            }
                                         }
                                     }
                                 }
@@ -1011,12 +1099,21 @@ pub async fn run_tui_loop(
                                         species_list_index =
                                             species_list_entries.len().saturating_sub(1);
                                         if species_list_index != previous {
-                                            queue_selected_species_auto_open(
-                                                &mut species_list_runtime,
+                                            if let Some(name) = start_selected_species_request(
+                                                &mut species_runtime,
+                                                update_tx.clone(),
+                                                service.clone(),
                                                 &species_list_entries,
                                                 species_list_index,
-                                                &species.scientific_name,
-                                            );
+                                                lookup_policy,
+                                            ) {
+                                                loading = true;
+                                                loading_start = Instant::now();
+                                                status = StatusBanner::new(
+                                                    StatusTone::Info,
+                                                    format!("Opening {name}..."),
+                                                );
+                                            }
                                         }
                                     }
                                 }
@@ -1049,31 +1146,34 @@ pub async fn run_tui_loop(
             }
 
             _ = async {
-                if let Some(pending) = species_list_runtime.pending.as_ref() {
+                if let Some(pending) = species_runtime.media_pending.as_ref() {
                     tokio::time::sleep_until(pending.deadline).await;
                 }
-            }, if species_list_runtime.pending.is_some() => {
-                if let Some(PendingSpeciesOpen { name, .. }) = species_list_runtime.pending.take() {
-                    loading = true;
-                    loading_start = Instant::now();
-                    status = StatusBanner::new(
-                        StatusTone::Info,
-                        format!("Opening {}...", name),
-                    );
+            }, if species_runtime.media_pending.is_some() => {
+                if let Some(PendingMediaLoad {
+                    species: media_species,
+                    request_id,
+                    force_refresh,
+                    allow_network,
+                    ..
+                }) =
+                    species_runtime.media_pending.take()
+                {
                     let tx = update_tx.clone();
                     let svc = service.clone();
                     let gb = gbif.clone();
-                    tokio::spawn(async move {
-                        open_taxon_entry(
+                    species_runtime.media_task = Some(tokio::spawn(async move {
+                        load_species_media(
                             tx,
                             svc,
                             gb,
-                            name,
-                            Some("SPECIES".to_string()),
-                            lookup_policy,
+                            media_species,
+                            request_id,
+                            force_refresh,
+                            allow_network,
                         )
                         .await;
-                    });
+                    }));
                 }
             }
 
@@ -1083,19 +1183,49 @@ pub async fn run_tui_loop(
                     Some(TuiUpdate::SpeciesLoaded {
                         species: new_species,
                         refreshed,
+                        request_id,
                     }) => {
-                        if refreshed
-                            && !new_species
-                                .scientific_name
-                                .eq_ignore_ascii_case(&species.scientific_name)
-                        {
+                        if !species_runtime.accepts(request_id) {
                             continue;
                         }
+                        species_runtime.profile_task = None;
+
+                        let previous_name = species.scientific_name.clone();
+                        media_cache.insert(
+                            previous_name,
+                            MediaViewState {
+                                portrait: image_state.take(),
+                                map: map_state.take(),
+                                complete: active_media_complete,
+                            },
+                        );
 
                         species = *new_species;
                         is_favorite = service.is_favorite(&species.scientific_name).await;
-                        image_state = None;
-                        map_state = None;
+                        if !refreshed {
+                            if let Some(cached_media) = media_cache.take(&species.scientific_name) {
+                                image_state = cached_media.portrait;
+                                map_state = cached_media.map;
+                                active_media_complete = cached_media.complete;
+                            } else {
+                                image_state = None;
+                                map_state = None;
+                                active_media_complete = false;
+                            }
+                        } else {
+                            let _ = media_cache.take(&species.scientific_name);
+                            image_state = None;
+                            map_state = None;
+                            active_media_complete = false;
+                        }
+                        if !active_media_complete {
+                            species_runtime.queue_media(
+                                species.clone(),
+                                request_id,
+                                refreshed,
+                                live_lookup_enabled,
+                            );
+                        }
                         loading = false;
 
                         search_suggestions = None;
@@ -1124,18 +1254,31 @@ pub async fn run_tui_loop(
                             format!("{action} {}.", species.scientific_name),
                         );
                     }
-                    Some(TuiUpdate::MediaLoaded { scientific_name, species_image: new_img, map_image: new_map }) => {
-                        if scientific_name == species.scientific_name {
-                            species_image = new_img;
-                            map_image = new_map;
-                            image_state = picker
-                                .as_ref()
-                                .zip(species_image.as_ref())
-                                .map(|(p, i)| PortraitImageState::new(*p, i.clone()));
-                            map_state = picker
-                                .as_ref()
-                                .zip(map_image.as_ref())
-                                .map(|(p, i)| MapImageState::new(*p, i.clone()));
+                    Some(TuiUpdate::MediaLoaded {
+                        scientific_name,
+                        species_image: new_img,
+                        map_image: new_map,
+                        request_id,
+                        complete,
+                        replace_portrait,
+                        replace_map,
+                    }) => {
+                        if species_runtime.accepts(request_id)
+                            && scientific_name.eq_ignore_ascii_case(&species.scientific_name)
+                        {
+                            if replace_portrait {
+                                image_state = new_img.and_then(|image| {
+                                    picker.map(|p| PortraitImageState::new(p, image))
+                                });
+                            }
+                            if replace_map {
+                                map_state = new_map
+                                    .and_then(|image| picker.map(|p| MapImageState::new(p, image)));
+                            }
+                            active_media_complete = complete;
+                            if complete {
+                                species_runtime.media_task = None;
+                            }
                         }
                     }
                     Some(TuiUpdate::SpeciesListLoaded {
@@ -1247,12 +1390,21 @@ pub async fn run_tui_loop(
                         message,
                         requested_name,
                         refreshed,
+                        request_id,
                     }) => {
-                        if refreshed && !requested_name.eq_ignore_ascii_case(&species.scientific_name)
-                        {
+                        if !species_runtime.accepts(request_id) {
                             continue;
                         }
+                        species_runtime.profile_task = None;
                         loading = false;
+                        if !active_media_complete {
+                            species_runtime.queue_media(
+                                species.clone(),
+                                request_id,
+                                false,
+                                live_lookup_enabled,
+                            );
+                        }
                         status = if refreshed {
                             StatusBanner::new(
                                 StatusTone::Warning,
@@ -1277,6 +1429,7 @@ pub async fn run_tui_loop(
     }
 
     search_runtime.cancel();
+    species_runtime.cancel_all();
     disable_raw_mode()?;
     stdout().execute(LeaveAlternateScreen)?;
     Ok(())
@@ -1286,55 +1439,49 @@ pub async fn run_tui_loop(
 async fn fetch_species_background(
     tx: mpsc::Sender<TuiUpdate>,
     service: Arc<SpeciesService>,
-    gbif: Arc<GbifClient>,
     name: String,
     policy: LookupPolicy,
+    request_id: u64,
 ) {
-    fetch_species_internal(tx, service, gbif, name, policy).await;
+    fetch_species_internal(tx, service, name, policy, request_id).await;
 }
 
-/// Background task to force refresh a species from APIs
-async fn fetch_species_background_refresh(
+fn start_species_request(
+    runtime: &mut SpeciesLoadRuntime,
     tx: mpsc::Sender<TuiUpdate>,
     service: Arc<SpeciesService>,
-    gbif: Arc<GbifClient>,
     name: String,
-) {
-    fetch_species_internal(tx, service, gbif, name, LookupPolicy::Refresh).await;
+    policy: LookupPolicy,
+) -> u64 {
+    let request_id = runtime.begin_profile_request();
+    runtime.profile_task = Some(tokio::spawn(async move {
+        fetch_species_background(tx, service, name, policy, request_id).await;
+    }));
+    request_id
 }
 
 /// Internal species fetch using the caller's explicit cache/live policy.
 async fn fetch_species_internal(
     tx: mpsc::Sender<TuiUpdate>,
     service: Arc<SpeciesService>,
-    gbif: Arc<GbifClient>,
     name: String,
     policy: LookupPolicy,
+    request_id: u64,
 ) {
     let fetch_span = crate::perf::start_span();
     let force_refresh = policy == LookupPolicy::Refresh;
     if !force_refresh {
-        if let Some(cached) = service.get_cached_with_images(&name).await {
+        if let Some(cached) = service.get_cached_profile(&name).await {
             let species = cached.species;
-            let cached_media = CachedMedia {
-                species_image: cached.species_image,
-                map_image: cached.map_image,
-            };
+            crate::perf::log_value("tui.cached_species_open", &species.scientific_name);
 
             let _ = tx
                 .send(TuiUpdate::SpeciesLoaded {
-                    species: Box::new(species.clone()),
+                    species: Box::new(species),
                     refreshed: false,
+                    request_id,
                 })
                 .await;
-            spawn_cached_media_load(
-                tx.clone(),
-                service,
-                gbif,
-                species.clone(),
-                Some(cached_media),
-            );
-            crate::perf::log_value("tui.cached_species_open", &species.scientific_name);
             crate::perf::log_elapsed("tui.fetch_species_open", fetch_span);
             return;
         }
@@ -1344,16 +1491,11 @@ async fn fetch_species_internal(
         Ok(new_species) => {
             let _ = tx
                 .send(TuiUpdate::SpeciesLoaded {
-                    species: Box::new(new_species.clone()),
+                    species: Box::new(new_species),
                     refreshed: force_refresh,
+                    request_id,
                 })
                 .await;
-
-            if force_refresh {
-                fetch_media_background(tx.clone(), service, gbif, new_species, force_refresh).await;
-            } else {
-                spawn_cached_media_load(tx.clone(), service, gbif, new_species, None);
-            }
 
             crate::perf::log_elapsed(
                 if force_refresh {
@@ -1378,85 +1520,69 @@ async fn fetch_species_internal(
                     message: e.to_string(),
                     requested_name: name,
                     refreshed: force_refresh,
+                    request_id,
                 })
                 .await;
         }
     }
 }
 
-fn spawn_species_refresh(
-    tx: mpsc::Sender<TuiUpdate>,
-    service: Arc<SpeciesService>,
-    gbif: Arc<GbifClient>,
-    name: String,
-) {
-    tokio::spawn(async move {
-        fetch_species_background_refresh(tx, service, gbif, name).await;
-    });
-}
-
-fn spawn_media_topoff_if_needed(
+async fn load_species_media(
     tx: mpsc::Sender<TuiUpdate>,
     service: Arc<SpeciesService>,
     gbif: Arc<GbifClient>,
     species: UnifiedSpecies,
-    needs_species_image: bool,
-    needs_map_image: bool,
+    request_id: u64,
+    force_refresh: bool,
+    allow_network: bool,
 ) {
-    let should_fetch_species_image = needs_species_image && species.preferred_image_url().is_some();
-    let should_fetch_map = needs_map_image && species.ids.gbif_key.is_some();
+    let mut has_portrait = false;
+    let mut has_map = false;
+    if !force_refresh {
+        let (species_image, map_image) = crate::load_cached_media(&service, &species).await;
+        has_portrait = species_image.is_some();
+        has_map = map_image.is_some();
+        let complete = media_is_complete(&species, has_portrait, has_map);
 
-    if !should_fetch_species_image && !should_fetch_map {
+        let _ = tx
+            .send(TuiUpdate::MediaLoaded {
+                scientific_name: species.scientific_name.clone(),
+                species_image,
+                map_image,
+                request_id,
+                complete,
+                replace_portrait: true,
+                replace_map: true,
+            })
+            .await;
+
+        if complete {
+            return;
+        }
+    }
+
+    if !allow_network {
         return;
     }
 
-    tokio::spawn(async move {
-        fetch_media_background(tx, service, gbif, species, false).await;
-    });
-}
-
-fn spawn_cached_media_load(
-    tx: mpsc::Sender<TuiUpdate>,
-    service: Arc<SpeciesService>,
-    gbif: Arc<GbifClient>,
-    species: UnifiedSpecies,
-    cached_media: Option<CachedMedia>,
-) {
-    tokio::spawn(async move {
-        load_cached_media_background(tx, service, gbif, species, cached_media).await;
-    });
-}
-
-async fn load_cached_media_background(
-    tx: mpsc::Sender<TuiUpdate>,
-    service: Arc<SpeciesService>,
-    gbif: Arc<GbifClient>,
-    species: UnifiedSpecies,
-    cached_media: Option<CachedMedia>,
-) {
-    let (species_image, map_image) = match cached_media {
-        Some(cached) => crate::decode_cached_media(&service, &species, cached).await,
-        None => crate::load_cached_media(&service, &species).await,
-    };
-    let needs_species_image = species_image.is_none() && species.preferred_image_url().is_some();
-    let needs_map_image = map_image.is_none() && species.ids.gbif_key.is_some();
-
-    let _ = tx
-        .send(TuiUpdate::MediaLoaded {
-            scientific_name: species.scientific_name.clone(),
-            species_image,
-            map_image,
-        })
-        .await;
-
-    spawn_media_topoff_if_needed(
+    let fetch_portrait =
+        species.preferred_image_url().is_some() && (force_refresh || !has_portrait);
+    let fetch_map = species.ids.gbif_key.is_some() && (force_refresh || !has_map);
+    fetch_media_background(
         tx,
         service,
         gbif,
         species,
-        needs_species_image,
-        needs_map_image,
-    );
+        MediaFetchPlan {
+            request_id,
+            force_refresh,
+            had_portrait: has_portrait,
+            had_map: has_map,
+            fetch_portrait,
+            fetch_map,
+        },
+    )
+    .await;
 }
 
 /// Toggle favorite status for a species
@@ -1465,25 +1591,48 @@ async fn toggle_favorite(tx: mpsc::Sender<TuiUpdate>, service: Arc<SpeciesServic
     let _ = tx.send(TuiUpdate::FavoriteUpdated { is_favorite }).await;
 }
 
-pub async fn fetch_media_background(
+async fn fetch_media_background(
     tx: mpsc::Sender<TuiUpdate>,
     service: Arc<SpeciesService>,
     gbif: Arc<GbifClient>,
     species: UnifiedSpecies,
-    force_refresh: bool,
+    plan: MediaFetchPlan,
 ) {
-    let (species_image, map_image) = tokio::join!(
-        crate::download_species_image(&species, &service),
-        crate::download_map_image_with_options(&gbif, &species, &service, force_refresh),
-    );
+    let portrait = async {
+        if plan.fetch_portrait {
+            crate::download_species_image(&species, &service).await
+        } else {
+            None
+        }
+    };
+    let map = async {
+        if plan.fetch_map {
+            crate::download_map_image_with_options(&gbif, &species, &service, plan.force_refresh)
+                .await
+        } else {
+            None
+        }
+    };
+    let (species_image, map_image) = tokio::join!(portrait, map);
+    let has_portrait = plan.had_portrait || species_image.is_some();
+    let has_map = plan.had_map || map_image.is_some();
 
     let _ = tx
         .send(TuiUpdate::MediaLoaded {
             scientific_name: species.scientific_name.clone(),
+            complete: media_is_complete(&species, has_portrait, has_map),
             species_image,
             map_image,
+            request_id: plan.request_id,
+            replace_portrait: plan.fetch_portrait,
+            replace_map: plan.fetch_map,
         })
         .await;
+}
+
+fn media_is_complete(species: &UnifiedSpecies, has_portrait: bool, has_map: bool) -> bool {
+    (species.preferred_image_url().is_none() || has_portrait)
+        && (species.ids.gbif_key.is_none() || has_map)
 }
 
 fn child_rank_for(rank: &str) -> Option<&'static str> {
@@ -1602,16 +1751,20 @@ fn selected_species_name(species: &UnifiedSpecies) -> Option<String> {
     }
 }
 
-fn queue_selected_species_auto_open(
-    runtime: &mut SpeciesListRuntime,
+fn start_selected_species_request(
+    runtime: &mut SpeciesLoadRuntime,
+    tx: mpsc::Sender<TuiUpdate>,
+    service: Arc<SpeciesService>,
     entries: &[SiblingTaxon],
     selected_index: usize,
-    current_name: &str,
-) {
-    runtime.queue(
-        entries.get(selected_index).map(|entry| entry.name.as_str()),
-        current_name,
-    );
+    policy: LookupPolicy,
+) -> Option<String> {
+    let name = entries
+        .get(selected_index)
+        .map(|entry| entry.name.as_str())?
+        .to_string();
+    start_species_request(runtime, tx, service, name.clone(), policy);
+    Some(name)
 }
 
 async fn send_browser_entries(
@@ -1838,17 +1991,6 @@ async fn fetch_parent_browser(
     }
 
     fetch_root_browser(tx, service, Some(context.name)).await;
-}
-
-async fn open_taxon_entry(
-    tx: mpsc::Sender<TuiUpdate>,
-    service: Arc<SpeciesService>,
-    gbif: Arc<GbifClient>,
-    name: String,
-    _rank: Option<String>,
-    policy: LookupPolicy,
-) {
-    fetch_species_background(tx, service, gbif, name, policy).await;
 }
 
 fn selected_search_target(
@@ -3714,10 +3856,6 @@ fn render_help(frame: &mut Frame) {
             Span::raw("Swap between A-Z species list and taxonomy"),
         ]),
         Line::from(vec![
-            Span::styled("pause     ", Style::default().fg(ACCENT_YELLOW)),
-            Span::raw("In the A-Z list, auto-load the highlighted species"),
-        ]),
-        Line::from(vec![
             Span::styled("→ l / Ent ", Style::default().fg(ACCENT_YELLOW)),
             Span::raw("Open the selected child or species"),
         ]),
@@ -3783,8 +3921,9 @@ mod tests {
     use super::{
         compact_assembly_spans, context_control_hints, render_browser_list, render_frame,
         render_status_bar, selected_search_target, sex_determination_summary_spans, source_badges,
-        trim_for_line, AsciiRangeCache, NavigatorFocus, RenderState, SearchAvailability,
-        SearchSuggestion, SiblingTaxon, StatusBanner, StatusTone,
+        trim_for_line, AsciiRangeCache, MediaViewCache, MediaViewState, NavigatorFocus,
+        RenderState, SearchAvailability, SearchSuggestion, SiblingTaxon, SpeciesLoadRuntime,
+        StatusBanner, StatusTone,
     };
     use crate::species::{
         Distribution, EvidenceMethod, ExternalIds, GenomeStats, Karyotype, LifeHistory, Taxonomy,
@@ -4087,6 +4226,37 @@ mod tests {
     #[test]
     fn blank_typed_name_has_no_target() {
         assert!(selected_search_target("   ", None, 0).is_none());
+    }
+
+    #[test]
+    fn species_requests_accept_only_the_latest_generation() {
+        let mut runtime = SpeciesLoadRuntime::default();
+        assert!(runtime.accepts(0));
+
+        let first = runtime.begin_profile_request();
+        let second = runtime.begin_profile_request();
+
+        assert!(!runtime.accepts(first));
+        assert!(runtime.accepts(second));
+    }
+
+    #[test]
+    fn media_view_cache_is_bounded_and_refreshes_recency() {
+        let state = |complete| MediaViewState {
+            portrait: None,
+            map: None,
+            complete,
+        };
+        let mut cache = MediaViewCache::new(2);
+
+        cache.insert("A".to_string(), state(false));
+        cache.insert("B".to_string(), state(false));
+        cache.insert("A".to_string(), state(true));
+        cache.insert("C".to_string(), state(true));
+
+        assert!(cache.take("B").is_none());
+        assert!(cache.take("A").is_some_and(|entry| entry.complete));
+        assert!(cache.take("C").is_some_and(|entry| entry.complete));
     }
 
     #[test]

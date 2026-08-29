@@ -28,8 +28,6 @@ use tokio::sync::mpsc;
 use tui::TuiUpdate;
 
 const DEFAULT_INITIAL_TAXON: &str = "Animalia";
-const HOT_SEED_VERSION_KEY: &str = "hot_seed.version";
-const HOT_SEED_VERSION: &str = "1";
 const HOT_SEED_CONCURRENCY: usize = 3;
 const RICH_CACHE_LAST_KEY: &str = "rich_cache.last_gbif_key";
 const RICH_CACHE_PROCESSED: &str = "rich_cache.processed";
@@ -306,8 +304,7 @@ async fn run_bulk_prefetch(force_refresh: bool) -> Result<(), Box<dyn std::error
             .progress_chars("#>-"),
     );
 
-    let summary =
-        run_hot_seed_sweep(service.clone(), gbif, force_refresh, Some(pb.clone()), true).await;
+    let summary = run_hot_seed_sweep(service.clone(), gbif, force_refresh, Some(pb.clone())).await;
 
     pb.finish_with_message(format!(
         "ready={} refreshed={} failed={}",
@@ -348,7 +345,6 @@ async fn run_hot_seed_sweep(
     gbif: Arc<GbifClient>,
     force_refresh: bool,
     progress: Option<indicatif::ProgressBar>,
-    persist_version: bool,
 ) -> HotSeedSummary {
     use futures::{stream, StreamExt};
 
@@ -434,16 +430,6 @@ async fn run_hot_seed_sweep(
 
     service.flush_cache_writes().await;
 
-    if persist_version {
-        if failed == 0 {
-            service
-                .set_user_stat(HOT_SEED_VERSION_KEY, HOT_SEED_VERSION)
-                .await;
-        } else {
-            service.delete_user_stat(HOT_SEED_VERSION_KEY).await;
-        }
-    }
-
     HotSeedSummary {
         total: species_names.len(),
         ready,
@@ -454,16 +440,13 @@ async fn run_hot_seed_sweep(
 }
 
 async fn audit_hot_seed_entry(service: &SpeciesService, requested_name: &str) -> HotSeedAuditRow {
-    match service.get_cached_with_images(requested_name).await {
-        Some(cached) => HotSeedAuditRow {
-            gaps: hot_seed_gaps(
-                &cached.species,
-                &CachedMedia {
-                    species_image: cached.species_image,
-                    map_image: cached.map_image,
-                },
-            ),
-        },
+    match service.get_cached_profile(requested_name).await {
+        Some(cached) => {
+            let media = service.get_cached_media(&cached.species).await;
+            HotSeedAuditRow {
+                gaps: hot_seed_gaps(&cached.species, &media),
+            }
+        }
         None => HotSeedAuditRow {
             gaps: vec!["profile"],
         },
@@ -730,7 +713,7 @@ async fn cached_curated_species(
     service: &SpeciesService,
     requested_name: &str,
 ) -> Option<UnifiedSpecies> {
-    if let Some(cached) = service.get_cached_with_images(requested_name).await {
+    if let Some(cached) = service.get_cached_profile(requested_name).await {
         return Some(cached.species);
     }
 
@@ -1103,21 +1086,15 @@ async fn run_tui_mode(
 
     let lookup_span = crate::perf::start_span();
     let cached = if lookup_policy != LookupPolicy::Refresh {
-        service.get_cached_with_images(initial_name).await
+        service.get_cached_profile(initial_name).await
     } else {
         None
     };
     let (species, species_image, map_image) = if let Some(cached) = cached {
         let species = cached.species;
-        let (species_image, map_image) = decode_cached_media(
-            &service,
-            &species,
-            CachedMedia {
-                species_image: cached.species_image,
-                map_image: cached.map_image,
-            },
-        )
-        .await;
+        let cached_media = service.get_cached_media(&species).await;
+        let (species_image, map_image) =
+            decode_cached_media(&service, &species, cached_media).await;
         crate::perf::log_value("tui.startup.cached_species_hit", &species.scientific_name);
         crate::perf::log_elapsed("tui.lookup_total", lookup_span);
         (species, species_image, map_image)
@@ -1152,8 +1129,6 @@ async fn run_tui_mode(
         service.has_offline_search(),
     );
     crate::perf::log_elapsed("tui.startup_meta", meta_span);
-
-    spawn_hot_seed_background(service.clone(), gbif.clone());
 
     // Create channel for TUI updates
     let (update_tx, update_rx) = mpsc::channel::<TuiUpdate>(32);
@@ -1226,19 +1201,6 @@ fn bootstrap_taxon_profile(name: &str) -> Option<UnifiedSpecies> {
         distribution: Distribution::default(),
         images: Vec::new(),
     })
-}
-
-fn spawn_hot_seed_background(service: Arc<SpeciesService>, gbif: Arc<GbifClient>) {
-    tokio::spawn(async move {
-        if service.get_user_stat(HOT_SEED_VERSION_KEY).await.as_deref() == Some(HOT_SEED_VERSION) {
-            return;
-        }
-
-        let summary = run_hot_seed_sweep(service, gbif, false, None, true).await;
-        crate::perf::log_value("hot_seed.ready", summary.ready);
-        crate::perf::log_value("hot_seed.refreshed", summary.refreshed);
-        crate::perf::log_value("hot_seed.failed", summary.failed);
-    });
 }
 
 pub async fn load_cached_media(

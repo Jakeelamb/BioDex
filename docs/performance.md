@@ -82,6 +82,22 @@ grapheme traversal, symbol writes, and cell styling. No BioDex arithmetic kernel
 remains dominant, so assembly or unsafe SIMD would add portability and
 maintenance cost without addressing the measured bottleneck.
 
+## Navigation loading boundary
+
+The field navigator now reads structured profile JSON independently from media
+blobs. A profile selection is issued immediately with a monotonic request ID;
+older profile and media results are rejected, and superseded media tasks are
+aborted. Portrait and map reads begin after a 120 ms dwell and recently rendered
+media state is retained in a three-entry LRU.
+
+On the same production commands used above, the cached Mallard text lookup moved
+from 6.2 ms to 6.0 ms mean over 15 runs. Ten warmed 5,000-frame renderer runs
+averaged 978.3 ms versus 967.6 ms before this slice; the roughly 1% difference is
+small relative to run-to-run variance and the rendering path itself is unchanged.
+These numbers establish effectively flat throughput rather than a speedup claim.
+The architectural win is that profile navigation no longer queries or copies
+image blobs at all.
+
 ## Reproduction
 
 ```bash

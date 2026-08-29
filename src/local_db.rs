@@ -12,7 +12,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-const SCHEMA_VERSION: i32 = 5;
+const SCHEMA_VERSION: i32 = 6;
 const DEFAULT_CACHE_TTL_SECS: i64 = 60 * 60 * 24 * 30; // 30 days
 const MAP_CACHE_VERSION: u32 = 3;
 const APP_DATA_DIR: &str = "biodex";
@@ -37,11 +37,8 @@ pub struct LocalDatabase {
 }
 
 #[derive(Debug, Clone)]
-pub struct CachedSpecies {
+pub struct CachedProfile {
     pub species: UnifiedSpecies,
-    pub species_image: Option<Vec<u8>>,
-    pub map_image: Option<Vec<u8>>,
-    pub cached_at: i64,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -259,6 +256,9 @@ impl LocalDatabase {
 
         if version < SCHEMA_VERSION {
             self.create_tables()?;
+            if version < 6 {
+                self.normalize_legacy_greenland_shark_profile()?;
+            }
             self.conn
                 .execute(&format!("PRAGMA user_version = {}", SCHEMA_VERSION), [])?;
         }
@@ -266,6 +266,40 @@ impl LocalDatabase {
         self.cleanup_legacy_map_cache()?;
 
         Ok(())
+    }
+
+    fn normalize_legacy_greenland_shark_profile(&mut self) -> rusqlite::Result<()> {
+        const LEGACY: &str = "somniosus microcephalus (bloch & schneider, 1801)";
+        const CANONICAL_KEY: &str = "somniosus microcephalus";
+        const CANONICAL_NAME: &str = "Somniosus microcephalus";
+
+        let transaction = self.conn.transaction()?;
+        transaction.execute(
+            "INSERT OR IGNORE INTO species (scientific_name, data_json, cached_at, last_accessed)
+             SELECT ?1, json_set(data_json, '$.scientific_name', ?2), cached_at, last_accessed
+             FROM species WHERE scientific_name = ?3",
+            params![CANONICAL_KEY, CANONICAL_NAME, LEGACY],
+        )?;
+        transaction.execute(
+            "DELETE FROM species WHERE scientific_name = ?1",
+            params![LEGACY],
+        )?;
+        transaction.execute(
+            "INSERT OR IGNORE INTO rich_species (scientific_name, data_json, enriched_at)
+             SELECT ?1, json_set(data_json, '$.scientific_name', ?2), enriched_at
+             FROM rich_species WHERE scientific_name = ?3",
+            params![CANONICAL_KEY, CANONICAL_NAME, LEGACY],
+        )?;
+        transaction.execute(
+            "DELETE FROM rich_species WHERE scientific_name = ?1",
+            params![LEGACY],
+        )?;
+        transaction.execute(
+            "UPDATE taxon_names SET scientific_name = ?1
+             WHERE lower(scientific_name) = ?2",
+            params![CANONICAL_NAME, LEGACY],
+        )?;
+        transaction.commit()
     }
 
     fn create_tables(&self) -> rusqlite::Result<()> {
@@ -441,39 +475,31 @@ impl LocalDatabase {
     // ==================== Species Cache ====================
 
     /// Get cached species data if not stale
-    pub fn get_species(&self, scientific_name: &str) -> rusqlite::Result<Option<CachedSpecies>> {
+    pub fn get_species(&self, scientific_name: &str) -> rusqlite::Result<Option<CachedProfile>> {
         let now = Self::current_timestamp();
         let cutoff = now - self.cache_ttl_secs;
 
-        let result: Option<(String, i64)> = self
+        let result: Option<String> = self
             .conn
             .query_row(
-                "SELECT data_json, cached_at FROM species
+                "SELECT data_json FROM species
              WHERE scientific_name = ?1 AND cached_at > ?2",
                 params![scientific_name.to_lowercase(), cutoff],
-                |row| Ok((row.get(0)?, row.get(1)?)),
+                |row| row.get(0),
             )
             .optional()?;
 
-        if let Some((json, cached_at)) = result {
+        if let Some(json) = result {
             // Update last accessed
             self.conn.execute(
                 "UPDATE species SET last_accessed = ?1 WHERE scientific_name = ?2",
                 params![now, scientific_name.to_lowercase()],
             )?;
 
-            // Parse JSON
+            // Parse only the structured profile. Media blobs are loaded through
+            // `get_cached_media` so text navigation never copies image data.
             if let Ok(species) = serde_json::from_str::<UnifiedSpecies>(&json) {
-                // Get cached images
-                let species_image = self.get_species_image(&species)?;
-                let map_image = self.get_map_image(&species)?;
-
-                return Ok(Some(CachedSpecies {
-                    species,
-                    species_image,
-                    map_image,
-                    cached_at,
-                }));
+                return Ok(Some(CachedProfile { species }));
             }
         }
 
@@ -527,24 +553,6 @@ impl LocalDatabase {
         )?;
 
         Ok(())
-    }
-
-    /// Get cached species image
-    fn get_species_image(&self, species: &UnifiedSpecies) -> rusqlite::Result<Option<Vec<u8>>> {
-        if let Some(url) = species.preferred_image_url() {
-            self.get_image(url)
-        } else {
-            Ok(None)
-        }
-    }
-
-    /// Get cached map image
-    fn get_map_image(&self, species: &UnifiedSpecies) -> rusqlite::Result<Option<Vec<u8>>> {
-        if let Some(gbif_key) = species.ids.gbif_key {
-            self.get_map_image_by_key(gbif_key)
-        } else {
-            Ok(None)
-        }
     }
 
     pub fn get_cached_media(
@@ -996,7 +1004,6 @@ impl LocalDatabase {
              FROM rich_species
              WHERE lower(json_extract(data_json, '$.rank')) = 'species'
                AND {}
-               AND COALESCE(json_extract(data_json, '$.description'), '') != 'Locally materialized from the offline taxonomy cache.'
              ORDER BY scientific_name COLLATE NOCASE
              LIMIT ?1",
             curated_species_sql_filter()
@@ -1313,17 +1320,13 @@ mod tests {
         let rich_species_count: i64 = conn
             .query_row("SELECT COUNT(*) FROM rich_species", [], |row| row.get(0))
             .unwrap();
-        let hot_seed_version: String = conn
-            .query_row(
-                "SELECT value FROM user_stats WHERE key = 'hot_seed.version'",
-                [],
-                |row| row.get(0),
-            )
+        let schema_version: i64 = conn
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
             .unwrap();
 
         assert_eq!(species_count, CURATED_ANIMAL_SPECIES.len() as i64);
         assert_eq!(rich_species_count, CURATED_ANIMAL_SPECIES.len() as i64);
-        assert_eq!(hot_seed_version, "1");
+        assert_eq!(schema_version, 0);
 
         let _ = fs::remove_dir_all(&root);
     }
@@ -1511,7 +1514,7 @@ mod tests {
     }
 
     #[test]
-    fn get_cached_species_names_returns_only_curated_rich_species_with_data() {
+    fn get_cached_species_names_keeps_curated_taxonomy_fallbacks_browsable() {
         let db = LocalDatabase::open_in_memory().unwrap();
 
         let lion = UnifiedSpecies {
@@ -1634,6 +1637,37 @@ mod tests {
 
         let names = db.get_cached_species_names(10).unwrap();
 
-        assert_eq!(names, vec!["Canis lupus", "Panthera leo"]);
+        assert_eq!(names, vec!["Canis lupus", "Felis catus", "Panthera leo"]);
+    }
+
+    #[test]
+    fn migration_canonicalizes_the_legacy_greenland_shark_name() {
+        let mut db = LocalDatabase::open_in_memory().unwrap();
+        let legacy = "somniosus microcephalus (bloch & schneider, 1801)";
+        let profile = r#"{
+            "scientific_name":"Somniosus microcephalus (Bloch & Schneider, 1801)",
+            "rank":"species"
+        }"#;
+        db.conn
+            .execute(
+                "INSERT INTO rich_species (scientific_name, data_json, enriched_at)
+                 VALUES (?1, ?2, 1)",
+                params![legacy, profile],
+            )
+            .unwrap();
+
+        db.normalize_legacy_greenland_shark_profile().unwrap();
+
+        let migrated: (String, String) = db
+            .conn
+            .query_row(
+                "SELECT scientific_name, json_extract(data_json, '$.scientific_name')
+                 FROM rich_species",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(migrated.0, "somniosus microcephalus");
+        assert_eq!(migrated.1, "Somniosus microcephalus");
     }
 }

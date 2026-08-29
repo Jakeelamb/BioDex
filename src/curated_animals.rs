@@ -108,7 +108,7 @@ pub const CURATED_ANIMAL_SPECIES: &[&str] = &[
     "Lepisosteus oculatus",
     "Oncorhynchus mykiss",
     "Esox lucius",
-    "Somniosus microcephalus (Bloch & Schneider, 1801)",
+    "Somniosus microcephalus",
     "Sparus aurata",
     // Non-chordates
     "Homarus americanus",
@@ -354,7 +354,7 @@ mod tests {
     #[test]
     fn curated_supplement_can_add_species_images() {
         let mut species = UnifiedSpecies {
-            scientific_name: "Somniosus microcephalus (Bloch & Schneider, 1801)".to_string(),
+            scientific_name: "Somniosus microcephalus".to_string(),
             common_names: Vec::new(),
             rank: "species".to_string(),
             taxonomy: Taxonomy::default(),

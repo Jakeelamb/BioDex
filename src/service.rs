@@ -11,7 +11,7 @@ use crate::api::{
 };
 use crate::cache::Cache;
 use crate::db_worker::DbWorker;
-use crate::local_db::{CachedMedia, CachedSpecies, TaxonName};
+use crate::local_db::{CachedMedia, CachedProfile, TaxonName};
 use crate::local_supplements::apply_local_supplements;
 use crate::species::{
     BoundingBox, CountryOccurrence, Distribution, EvidenceMethod, ExternalIds, GenomeStats,
@@ -182,8 +182,8 @@ impl SpeciesService {
         Ok(species)
     }
 
-    /// Get cached species data and images (for TUI)
-    pub async fn get_cached_with_images(&self, name: &str) -> Option<CachedSpecies> {
+    /// Get a cached structured profile without touching media blobs.
+    pub async fn get_cached_profile(&self, name: &str) -> Option<CachedProfile> {
         self.db
             .get_species(name.to_string())
             .await

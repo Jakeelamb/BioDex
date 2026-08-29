@@ -4,9 +4,6 @@ import argparse
 import pathlib
 import sqlite3
 
-HOT_SEED_VERSION = "1"
-
-
 def parse_curated_species(repo_root: pathlib.Path) -> list[str]:
     names: list[str] = []
     in_block = False
@@ -139,11 +136,6 @@ def main() -> None:
             """,
             taxon_rows,
         )
-        dest.execute(
-            "INSERT INTO user_stats (key, value) VALUES (?, ?)",
-            ("hot_seed.version", HOT_SEED_VERSION),
-        )
-
         dest.commit()
         dest.execute("VACUUM")
     finally:

@@ -13,7 +13,7 @@ Click the preview to open the full demo clip.
 ## Highlights
 
 - Browse a curated 100-species starter pack with bundled local cached profiles
-- Move through species alphabetically, with auto-loading as you pause on entries
+- Move through species alphabetically with immediate local profile updates
 - Switch into taxonomy mode when you want to explore by kingdom, phylum, class, order, family, genus, and species
 - View portraits, range maps, lineage, genome metadata, conservation status, and life-history stats in one terminal screen
 - Reuse cached SQLite data so repeat browsing stays fast and mostly offline
@@ -108,7 +108,7 @@ The examples below assume `biodex` is on your PATH. If not, use `./target/releas
 - `biodex`: open the TUI at `Animalia`
 - `biodex "Ailuropoda melanoleuca"`: open a species directly; uncached names are fetched live and cached
 - `biodex --text "Homo sapiens"`: print species data without launching the TUI
-- `biodex --offline "Homo sapiens"`: use only local profiles and imported taxonomy
+- `biodex --offline "Homo sapiens"`: use only local profiles, taxonomy, and media
 - `biodex --force-refresh "Homo sapiens"`: bypass cached profile data and refresh from live sources
 - `biodex --prefetch`: seed the default 100-species hot cache
 - `biodex --prefetch-animals`: refresh curated Animalia candidates and cache media
@@ -120,8 +120,9 @@ The examples below assume `biodex` is on your PATH. If not, use `./target/releas
 
 The bottom command strip follows the active species, taxonomy, or search mode;
 press `?` for the complete control map. The navigator header shows the selected
-record position, and pausing on an A-Z species automatically opens its field
-record.
+record position, and moving through the A-Z list immediately opens each local
+field record. Heavier portrait and map work follows separately after a short
+dwell so rapid browsing remains responsive.
 
 - `↑/↓` or `j/k`: move through the active navigator
 - `t`: switch between the A-Z species list and taxonomy browser
@@ -172,7 +173,11 @@ Normal lookups prefer local data and fall back to the public sources above when 
 
 The published crate ships with a bundled starter SQLite database for the curated 100-species pack, so species profiles and taxonomy browsing are available immediately after install.
 
-Portraits and raster range maps are still cached lazily on demand. They are not bundled into the crate because shipping third-party media would make the package dramatically larger and complicate downstream licensing.
+Portraits and raster range maps are cached lazily for the active record and a
+small set of recently viewed records. BioDex does not download the entire media
+pack at startup. Media is not bundled into the crate because shipping
+third-party assets would make the package dramatically larger and complicate
+downstream licensing.
 
 If you want the starter-pack media cached immediately after install, run:
 

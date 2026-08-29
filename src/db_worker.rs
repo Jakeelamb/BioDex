@@ -1,5 +1,5 @@
 use crate::api::wikipedia::{WikiArticle, WikiLifeHistoryFallback};
-use crate::local_db::{CachedMedia, CachedSpecies, LocalDatabase, TaxonName};
+use crate::local_db::{CachedMedia, CachedProfile, LocalDatabase, TaxonName};
 use crate::species::UnifiedSpecies;
 use std::io;
 use std::sync::mpsc;
@@ -79,7 +79,7 @@ impl DbWorker {
         let _ = self.sender.send(Box::new(operation));
     }
 
-    pub async fn get_species(&self, scientific_name: String) -> Option<CachedSpecies> {
+    pub async fn get_species(&self, scientific_name: String) -> Option<CachedProfile> {
         self.request(move |db| db.get_species(&scientific_name).ok().flatten())
             .await
             .flatten()
