@@ -83,17 +83,33 @@ cargo run --release -- "Panthera leo"
 
 ## Requirements
 
-- Rust toolchain
+- Rust 1.85 or newer
 - A modern terminal
 - An image-capable terminal for portraits and raster range maps; otherwise BioDex falls back to text placeholders
+
+## Development
+
+Run the equivalent local verification before submitting a change:
+
+```bash
+cargo fmt --all -- --check
+cargo clippy --all-targets --locked -- -D warnings
+cargo test --all-targets --locked
+cargo package --locked --allow-dirty
+cargo audit
+```
+
+CI verifies the minimum supported Rust version (1.85) as well as the current stable toolchain.
 
 ## Common Commands
 
 The examples below assume `biodex` is on your PATH. If not, use `./target/release/biodex` from the repo root.
 
 - `biodex`: open the TUI at `Animalia`
-- `biodex "Ailuropoda melanoleuca"`: open a species directly
+- `biodex "Ailuropoda melanoleuca"`: open a species directly; uncached names are fetched live and cached
 - `biodex --text "Homo sapiens"`: print species data without launching the TUI
+- `biodex --offline "Homo sapiens"`: use only local profiles and imported taxonomy
+- `biodex --force-refresh "Homo sapiens"`: bypass cached profile data and refresh from live sources
 - `biodex --prefetch`: seed the default 100-species hot cache
 - `biodex --prefetch-animals`: refresh curated Animalia candidates and cache media
 - `biodex --import-backbone`: import the GBIF backbone for offline taxonomy search, roughly 200 MB
@@ -106,7 +122,7 @@ The examples below assume `biodex` is on your PATH. If not, use `./target/releas
 - `t`: switch between the A-Z species list and taxonomy browser
 - `Enter` / `l` / `→`: open the selected entry
 - `h` / `←`: move up a taxonomy level
-- `/`: search
+- `/`: search the local index or type any species name and press `Enter` for a live lookup
 - `r`: refresh from live sources
 - `f`: toggle saved status
 - `?`: help
@@ -127,9 +143,27 @@ BioDex merges public data from several sources and caches the result locally:
 | Ollama | Optional local pass to fill missing life-history fields from cached article text |
 | Local curated pack | Starter metadata for the 100-species browsing set |
 
+### Scientific data semantics
+
+BioDex labels chromosome and mitochondrial values as assembly-scoped facts. `Assembly chr` is the number of chromosome records represented by the selected assembly; it is not necessarily the organism's diploid chromosome number (`2n`). `MT` is the mitochondrial sequence length associated with the selected record when available.
+
+Sex systems are kept separate from assembly metadata. Covered starter taxa use the manually curated May 19, 2014 Tree of Sex archive for sexual system, karyotype, and genetic or environmental sex determination. Every claim retains the archive row, dataset version, DOI, and original literature citation; uncovered taxa remain visibly `unknown`. A compact `TOS14` badge marks these records in the field-device view.
+
+Regenerate the compact starter supplement from the official archived CSV files with:
+
+```bash
+uv run scripts/build_tree_of_sex_supplement.py \
+  --vertebrates /path/to/vert.data-may19.csv \
+  --invertebrates /path/to/invert.data-may19.csv
+```
+
+Reproductive biology is stored as sourced claims rather than a flat label. Reproductive mechanism (sexual/asexual), sexual organization, sex-determination mechanism, karyotype (for example `XX/XY` or `ZZ/ZW`), and offspring development (oviparous/viviparous) remain separate. Unknown, variable, not-applicable, and conflicting evidence are preserved. Text-mined candidates are distinguishable from structured datasets and curated literature; BioDex does not infer a species-level sex-determination system from specimen sex or chromosome names alone.
+
 ## Caching
 
 BioDex stores its local database and media cache under `biodex` app directories.
+
+Normal lookups prefer local data and fall back to the public sources above when a name is not cached. Successful live profiles are persisted for fast repeat visits. Use `--offline` when BioDex must not make a live species lookup, or `--force-refresh` to bypass profile caches and update an entry. These two options are mutually exclusive.
 
 The published crate ships with a bundled starter SQLite database for the curated 100-species pack, so species profiles and taxonomy browsing are available immediately after install.
 

@@ -7,9 +7,7 @@ use serde::Deserialize;
 
 const BASE_URL: &str = "https://rest.ensembl.org";
 
-pub struct EnsemblClient {
-    client: reqwest::Client,
-}
+pub struct EnsemblClient;
 
 /// Species genome information from Ensembl
 #[derive(Debug, Clone, Default)]
@@ -74,12 +72,7 @@ struct SpeciesData {
 
 impl EnsemblClient {
     pub fn new() -> Self {
-        Self {
-            client: reqwest::Client::builder()
-                .timeout(std::time::Duration::from_secs(15))
-                .build()
-                .unwrap_or_else(|_| reqwest::Client::new()),
-        }
+        Self
     }
 
     /// Search for a species by name and get genome info
@@ -93,8 +86,7 @@ impl EnsemblClient {
             BASE_URL, species_id
         );
 
-        let response = self
-            .client
+        let response = super::http_client()
             .get(&url)
             .header("Accept", "application/json")
             .send()
@@ -135,8 +127,7 @@ impl EnsemblClient {
     async fn find_species(&self, name: &str) -> Result<String> {
         let url = format!("{}/info/species?content-type=application/json", BASE_URL);
 
-        let response = self
-            .client
+        let response = super::http_client()
             .get(&url)
             .header("Accept", "application/json")
             .send()
@@ -189,8 +180,7 @@ impl EnsemblClient {
             BASE_URL, species_id
         );
 
-        let response = self
-            .client
+        let response = super::http_client()
             .get(&url)
             .header("Accept", "application/json")
             .send()

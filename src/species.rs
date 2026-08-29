@@ -1,8 +1,8 @@
 //! Unified species types for aggregating data from multiple APIs
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 
-pub const CURRENT_LIFE_HISTORY_VERSION: u8 = 3;
+pub const CURRENT_LIFE_HISTORY_VERSION: u8 = 4;
 
 /// Aggregated species information from all data sources
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -89,7 +89,10 @@ pub struct GenomeStats {
     pub assembly_name: Option<String>,
     /// Total genome size in base pairs
     pub genome_size_bp: Option<u64>,
-    /// Number of chromosomes
+    /// Number of chromosome records represented in the selected assembly.
+    ///
+    /// This is assembly-scoped and must not be presented as the biological
+    /// diploid chromosome number (`2n`).
     pub chromosome_count: Option<u32>,
     /// Number of scaffolds
     pub scaffold_count: Option<u32>,
@@ -117,9 +120,8 @@ pub struct GenomeStats {
     pub genebuild: Option<String>,
 }
 
-/// Life history statistics from encyclopedic sources such as Wikidata
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-#[serde(default)]
+/// Life-history statistics and evidence-backed reproductive biology.
+#[derive(Debug, Clone, Default, Serialize)]
 pub struct LifeHistory {
     /// Extraction/version marker for cached life-history stats
     pub extraction_version: u8,
@@ -131,8 +133,596 @@ pub struct LifeHistory {
     pub height_meters: Option<f64>,
     /// Typical body mass in kilograms
     pub mass_kilograms: Option<f64>,
-    /// Reproduction strategies or modes
-    pub reproduction_modes: Vec<String>,
+    /// Reproductive traits with claim-level provenance and scope.
+    pub reproductive_traits: ReproductiveTraits,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+struct LifeHistoryWire {
+    extraction_version: u8,
+    lifespan_years: Option<f64>,
+    length_meters: Option<f64>,
+    height_meters: Option<f64>,
+    mass_kilograms: Option<f64>,
+    reproductive_traits: ReproductiveTraits,
+    // BioDex v0.1.1 and earlier cached this flattened representation.
+    reproduction_modes: Vec<String>,
+}
+
+impl<'de> Deserialize<'de> for LifeHistory {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let wire = LifeHistoryWire::deserialize(deserializer)?;
+        let mut reproductive_traits = wire.reproductive_traits;
+        if !wire.reproduction_modes.is_empty() {
+            reproductive_traits.add_classified_labels(
+                &wire.reproduction_modes,
+                TraitSource::new("Legacy BioDex cache"),
+                EvidenceMethod::LegacyMigration,
+                TraitScope::default(),
+            );
+        }
+
+        Ok(Self {
+            extraction_version: wire.extraction_version,
+            lifespan_years: wire.lifespan_years,
+            length_meters: wire.length_meters,
+            height_meters: wire.height_meters,
+            mass_kilograms: wire.mass_kilograms,
+            reproductive_traits,
+        })
+    }
+}
+
+/// Resolution state for a set of sourced trait claims.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EvidenceState {
+    #[default]
+    Unknown,
+    Known,
+    Variable,
+    Conflict,
+    NotApplicable,
+}
+
+/// How a source established a trait claim.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EvidenceMethod {
+    CuratedLiterature,
+    StructuredDataset,
+    Inherited,
+    TextCandidate,
+    LegacyMigration,
+}
+
+/// Stable source identity retained with every reproductive-trait claim.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TraitSource {
+    pub dataset: String,
+    pub record_id: Option<String>,
+    pub url: Option<String>,
+    pub citation: Option<String>,
+    pub version: Option<String>,
+    pub retrieved_at_unix: Option<u64>,
+}
+
+impl TraitSource {
+    pub fn new(dataset: impl Into<String>) -> Self {
+        Self {
+            dataset: dataset.into(),
+            record_id: None,
+            url: None,
+            citation: None,
+            version: None,
+            retrieved_at_unix: None,
+        }
+    }
+}
+
+/// Biological scope for a claim. Empty fields mean the source did not state it.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct TraitScope {
+    pub taxon: Option<String>,
+    pub population: Option<String>,
+    pub sex: Option<String>,
+    pub life_stage: Option<String>,
+}
+
+impl TraitScope {
+    pub fn for_taxon(taxon: impl Into<String>) -> Self {
+        Self {
+            taxon: Some(taxon.into()),
+            ..Self::default()
+        }
+    }
+}
+
+/// One scoped value and the evidence supporting it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TraitEvidence<T> {
+    pub value: T,
+    pub scope: TraitScope,
+    pub source: TraitSource,
+    pub method: EvidenceMethod,
+}
+
+impl<T> TraitEvidence<T> {
+    pub fn new(value: T, source: TraitSource, method: EvidenceMethod, scope: TraitScope) -> Self {
+        Self {
+            value,
+            scope,
+            source,
+            method,
+        }
+    }
+}
+
+/// All claims for one trait dimension, including uncertainty and disagreement.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct EvidenceSet<T> {
+    state: EvidenceState,
+    note: Option<String>,
+    claims: Vec<TraitEvidence<T>>,
+}
+
+impl<T> Default for EvidenceSet<T> {
+    fn default() -> Self {
+        Self {
+            state: EvidenceState::Unknown,
+            note: None,
+            claims: Vec::new(),
+        }
+    }
+}
+
+impl<T> EvidenceSet<T>
+where
+    T: Clone + PartialEq,
+{
+    pub fn add_claim(&mut self, claim: TraitEvidence<T>) {
+        if self.claims.iter().any(|existing| existing == &claim) {
+            return;
+        }
+
+        let adds_distinct_value = self
+            .claims
+            .iter()
+            .any(|existing| existing.value != claim.value);
+        self.claims.push(claim);
+        self.state = match (self.state, adds_distinct_value) {
+            (EvidenceState::Conflict, _) => EvidenceState::Conflict,
+            (EvidenceState::Variable, _) | (_, true) => EvidenceState::Variable,
+            _ => EvidenceState::Known,
+        };
+        self.note = None;
+    }
+
+    pub fn mark_conflict(&mut self, note: impl Into<String>) {
+        self.state = EvidenceState::Conflict;
+        self.note = Some(note.into());
+    }
+
+    pub fn mark_not_applicable(&mut self, reason: impl Into<String>) {
+        self.state = EvidenceState::NotApplicable;
+        self.note = Some(reason.into());
+        self.claims.clear();
+    }
+
+    pub fn state(&self) -> EvidenceState {
+        self.state
+    }
+
+    pub fn note(&self) -> Option<&str> {
+        self.note.as_deref()
+    }
+
+    pub fn claims(&self) -> &[TraitEvidence<T>] {
+        &self.claims
+    }
+
+    fn merge_missing_from(&mut self, previous: &Self) {
+        if self.state == EvidenceState::Unknown && self.claims.is_empty() {
+            *self = previous.clone();
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReproductiveMode {
+    Sexual,
+    Asexual,
+    FacultativeSexualAsexual,
+    AlternationOfGenerations,
+    Vegetative,
+    Other(String),
+}
+
+impl ReproductiveMode {
+    pub fn label(&self) -> &str {
+        match self {
+            Self::Sexual => "sexual",
+            Self::Asexual => "asexual",
+            Self::FacultativeSexualAsexual => "sexual/asexual",
+            Self::AlternationOfGenerations => "alternating generations",
+            Self::Vegetative => "vegetative",
+            Self::Other(value) => value,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SexualSystem {
+    SeparateSexes,
+    SimultaneousHermaphrodite,
+    Protandrous,
+    Protogynous,
+    BidirectionalSexChange,
+    Monoecious,
+    Gynodioecious,
+    Androdioecious,
+    Trioecious,
+    Other(String),
+}
+
+impl SexualSystem {
+    pub fn label(&self) -> &str {
+        match self {
+            Self::SeparateSexes => "separate sexes",
+            Self::SimultaneousHermaphrodite => "simultaneous hermaphrodite",
+            Self::Protandrous => "protandrous",
+            Self::Protogynous => "protogynous",
+            Self::BidirectionalSexChange => "bidirectional sex change",
+            Self::Monoecious => "monoecious",
+            Self::Gynodioecious => "gynodioecious",
+            Self::Androdioecious => "androdioecious",
+            Self::Trioecious => "trioecious",
+            Self::Other(value) => value,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SexDetermination {
+    GeneticChromosomal,
+    #[serde(alias = "genetic_non_chromosomal")]
+    GeneticOther,
+    Haplodiploid,
+    EnvironmentalTemperature,
+    EnvironmentalOther,
+    Cytoplasmic,
+    MixedGeneticEnvironmental,
+    Other(String),
+}
+
+impl SexDetermination {
+    pub fn label(&self) -> &str {
+        match self {
+            Self::GeneticChromosomal => "genetic",
+            Self::GeneticOther => "genetic (system unspecified)",
+            Self::Haplodiploid => "haplodiploid",
+            Self::EnvironmentalTemperature => "temperature",
+            Self::EnvironmentalOther => "environmental",
+            Self::Cytoplasmic => "cytoplasmic",
+            Self::MixedGeneticEnvironmental => "genetic/environmental",
+            Self::Other(value) => value,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Karyotype {
+    XxXy,
+    XxX0,
+    ZzZw,
+    ZzZ0,
+    Uv,
+    Haplodiploid,
+    ComplexMultiple,
+    HomomorphicUndifferentiated,
+    Other(String),
+}
+
+impl Karyotype {
+    pub fn label(&self) -> &str {
+        match self {
+            Self::XxXy => "XX/XY",
+            Self::XxX0 => "XX/X0",
+            Self::ZzZw => "ZZ/ZW",
+            Self::ZzZ0 => "ZZ/Z0",
+            Self::Uv => "UV",
+            Self::Haplodiploid => "haplodiploid",
+            Self::ComplexMultiple => "complex/multiple",
+            Self::HomomorphicUndifferentiated => "homomorphic",
+            Self::Other(value) => value,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OffspringDevelopment {
+    Oviparous,
+    Ovoviviparous,
+    Viviparous,
+    Larviparous,
+    Spores,
+    Vegetative,
+    Other(String),
+}
+
+impl OffspringDevelopment {
+    pub fn label(&self) -> &str {
+        match self {
+            Self::Oviparous => "oviparous",
+            Self::Ovoviviparous => "ovoviviparous",
+            Self::Viviparous => "viviparous",
+            Self::Larviparous => "larviparous",
+            Self::Spores => "spores",
+            Self::Vegetative => "vegetative",
+            Self::Other(value) => value,
+        }
+    }
+}
+
+/// Canonical reproductive-trait record. Source adapters add claims here;
+/// callers consume summaries and evidence without knowing adapter details.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ReproductiveTraits {
+    pub reproductive_modes: EvidenceSet<ReproductiveMode>,
+    pub sexual_systems: EvidenceSet<SexualSystem>,
+    pub sex_determination: EvidenceSet<SexDetermination>,
+    pub karyotypes: EvidenceSet<Karyotype>,
+    pub offspring_development: EvidenceSet<OffspringDevelopment>,
+}
+
+impl ReproductiveTraits {
+    pub fn has_any(&self) -> bool {
+        [
+            self.reproductive_modes.state(),
+            self.sexual_systems.state(),
+            self.sex_determination.state(),
+            self.karyotypes.state(),
+            self.offspring_development.state(),
+        ]
+        .into_iter()
+        .any(|state| state != EvidenceState::Unknown)
+    }
+
+    /// Iterate over the provenance retained by every reproductive claim.
+    pub fn sources(&self) -> impl Iterator<Item = &TraitSource> {
+        self.reproductive_modes
+            .claims()
+            .iter()
+            .map(|claim| &claim.source)
+            .chain(
+                self.sexual_systems
+                    .claims()
+                    .iter()
+                    .map(|claim| &claim.source),
+            )
+            .chain(
+                self.sex_determination
+                    .claims()
+                    .iter()
+                    .map(|claim| &claim.source),
+            )
+            .chain(self.karyotypes.claims().iter().map(|claim| &claim.source))
+            .chain(
+                self.offspring_development
+                    .claims()
+                    .iter()
+                    .map(|claim| &claim.source),
+            )
+    }
+
+    pub fn has_source_dataset(&self, dataset: &str) -> bool {
+        self.sources()
+            .any(|source| source.dataset.eq_ignore_ascii_case(dataset))
+    }
+
+    /// Whether the reproduction line has something meaningful to display,
+    /// without allocating the display string itself.
+    pub fn has_reproduction_summary(&self) -> bool {
+        self.reproductive_modes.state() != EvidenceState::Unknown
+            || self.offspring_development.state() != EvidenceState::Unknown
+            || self.sexual_systems.state() != EvidenceState::Unknown
+    }
+
+    pub fn add_classified_labels(
+        &mut self,
+        labels: &[String],
+        source: TraitSource,
+        method: EvidenceMethod,
+        scope: TraitScope,
+    ) {
+        for label in labels {
+            let cleaned = label.trim();
+            if cleaned.is_empty() {
+                continue;
+            }
+
+            let key = cleaned.to_ascii_lowercase();
+            match key.as_str() {
+                "sexual" | "sexual reproduction" => {
+                    self.reproductive_modes.add_claim(TraitEvidence::new(
+                        ReproductiveMode::Sexual,
+                        source.clone(),
+                        method,
+                        scope.clone(),
+                    ))
+                }
+                "asexual" | "asexual reproduction" => {
+                    self.reproductive_modes.add_claim(TraitEvidence::new(
+                        ReproductiveMode::Asexual,
+                        source.clone(),
+                        method,
+                        scope.clone(),
+                    ))
+                }
+                "vegetative" | "vegetative reproduction" => {
+                    self.reproductive_modes.add_claim(TraitEvidence::new(
+                        ReproductiveMode::Vegetative,
+                        source.clone(),
+                        method,
+                        scope.clone(),
+                    ))
+                }
+                "oviparous" | "oviparity" => {
+                    self.offspring_development.add_claim(TraitEvidence::new(
+                        OffspringDevelopment::Oviparous,
+                        source.clone(),
+                        method,
+                        scope.clone(),
+                    ))
+                }
+                "ovoviviparous" | "ovoviviparity" => {
+                    self.offspring_development.add_claim(TraitEvidence::new(
+                        OffspringDevelopment::Ovoviviparous,
+                        source.clone(),
+                        method,
+                        scope.clone(),
+                    ))
+                }
+                "viviparous" | "viviparity" => {
+                    self.offspring_development.add_claim(TraitEvidence::new(
+                        OffspringDevelopment::Viviparous,
+                        source.clone(),
+                        method,
+                        scope.clone(),
+                    ))
+                }
+                _ => self.reproductive_modes.add_claim(TraitEvidence::new(
+                    ReproductiveMode::Other(cleaned.to_string()),
+                    source.clone(),
+                    method,
+                    scope.clone(),
+                )),
+            }
+        }
+    }
+
+    pub fn reproduction_summary(&self) -> Option<String> {
+        if self.reproductive_modes.state() == EvidenceState::Conflict
+            || self.offspring_development.state() == EvidenceState::Conflict
+            || self.sexual_systems.state() == EvidenceState::Conflict
+        {
+            return Some("conflicting evidence".to_string());
+        }
+
+        let mut labels = Vec::new();
+        extend_unique_labels(
+            &mut labels,
+            self.reproductive_modes
+                .claims()
+                .iter()
+                .map(|claim| claim.value.label()),
+        );
+        extend_unique_labels(
+            &mut labels,
+            self.offspring_development
+                .claims()
+                .iter()
+                .map(|claim| claim.value.label()),
+        );
+        extend_unique_labels(
+            &mut labels,
+            self.sexual_systems
+                .claims()
+                .iter()
+                .map(|claim| claim.value.label()),
+        );
+
+        summarize_evidence_labels(
+            labels,
+            [
+                self.reproductive_modes.state(),
+                self.offspring_development.state(),
+                self.sexual_systems.state(),
+            ],
+        )
+    }
+
+    pub fn sex_determination_summary(&self) -> Option<String> {
+        if self.sex_determination.state() == EvidenceState::Conflict
+            || self.karyotypes.state() == EvidenceState::Conflict
+        {
+            return Some("conflicting evidence".to_string());
+        }
+
+        let mut labels = Vec::new();
+        extend_unique_labels(
+            &mut labels,
+            self.karyotypes
+                .claims()
+                .iter()
+                .map(|claim| claim.value.label()),
+        );
+        extend_unique_labels(
+            &mut labels,
+            self.sex_determination
+                .claims()
+                .iter()
+                .map(|claim| claim.value.label()),
+        );
+
+        summarize_evidence_labels(
+            labels,
+            [self.karyotypes.state(), self.sex_determination.state()],
+        )
+    }
+
+    pub fn merge_missing_from(&mut self, previous: &Self) {
+        self.reproductive_modes
+            .merge_missing_from(&previous.reproductive_modes);
+        self.sexual_systems
+            .merge_missing_from(&previous.sexual_systems);
+        self.sex_determination
+            .merge_missing_from(&previous.sex_determination);
+        self.karyotypes.merge_missing_from(&previous.karyotypes);
+        self.offspring_development
+            .merge_missing_from(&previous.offspring_development);
+    }
+}
+
+fn extend_unique_labels<'a>(labels: &mut Vec<String>, values: impl Iterator<Item = &'a str>) {
+    for value in values {
+        if !labels
+            .iter()
+            .any(|current| current.eq_ignore_ascii_case(value))
+        {
+            labels.push(value.to_string());
+        }
+    }
+}
+
+fn summarize_evidence_labels<const N: usize>(
+    labels: Vec<String>,
+    states: [EvidenceState; N],
+) -> Option<String> {
+    if labels.is_empty() {
+        return states
+            .contains(&EvidenceState::NotApplicable)
+            .then(|| "not applicable".to_string());
+    }
+
+    let joined = labels.join(" · ");
+    if states.contains(&EvidenceState::Variable) {
+        Some(format!("variable · {joined}"))
+    } else {
+        Some(joined)
+    }
 }
 
 impl From<crate::api::ncbi::GenomeStats> for GenomeStats {
@@ -195,6 +785,65 @@ impl Taxonomy {
         lineage
     }
 
+    /// Retain an already-canonical lineage and rebuild only stale cache data.
+    pub fn ensure_display_lineage(&mut self, scientific_name: &str, rank: &str) {
+        if self.display_lineage_is_current(scientific_name, rank) {
+            return;
+        }
+        self.lineage = self.build_display_lineage(scientific_name, rank);
+    }
+
+    fn display_lineage_is_current(&self, scientific_name: &str, rank: &str) -> bool {
+        if scientific_name.trim().is_empty() {
+            return self.lineage.is_empty();
+        }
+
+        let expected = [
+            (self.kingdom.as_deref(), "Kingdom"),
+            (self.phylum.as_deref(), "Phylum"),
+            (self.class.as_deref(), "Class"),
+            (self.order.as_deref(), "Order"),
+            (self.family.as_deref(), "Family"),
+            (self.genus.as_deref(), "Genus"),
+        ];
+        let mut entries = self.lineage.iter();
+
+        for (name, expected_rank) in expected {
+            let Some(name) = name else {
+                continue;
+            };
+            let Some(entry) = entries.next() else {
+                return false;
+            };
+            if !entry.name.eq_ignore_ascii_case(name)
+                || !entry.rank.eq_ignore_ascii_case(expected_rank)
+            {
+                return false;
+            }
+        }
+
+        let terminal_is_standard_rank = ["kingdom", "phylum", "class", "order", "family", "genus"]
+            .iter()
+            .any(|standard| rank.trim().eq_ignore_ascii_case(standard));
+        if !terminal_is_standard_rank {
+            let Some(entry) = entries.next() else {
+                return false;
+            };
+            let expected_rank = if rank.trim().is_empty() {
+                "species"
+            } else {
+                rank
+            };
+            if !entry.name.eq_ignore_ascii_case(scientific_name)
+                || !entry.rank.eq_ignore_ascii_case(expected_rank)
+            {
+                return false;
+            }
+        }
+
+        entries.next().is_none()
+    }
+
     fn push_display_entry(&self, lineage: &mut Vec<LineageEntry>, name: Option<&str>, rank: &str) {
         if let Some(name) = name {
             Self::push_unique_entry(lineage, name, rank);
@@ -248,7 +897,7 @@ impl LifeHistory {
             || self.length_meters.is_some()
             || self.height_meters.is_some()
             || self.mass_kilograms.is_some()
-            || !self.reproduction_modes.is_empty()
+            || self.reproductive_traits.has_any()
     }
 
     pub fn is_current(&self) -> bool {
@@ -329,8 +978,9 @@ impl From<crate::api::ncbi::LineageEntry> for LineageEntry {
 #[cfg(test)]
 mod tests {
     use super::{
-        normalize_rank, ExternalIds, GenomeStats, ImageInfo, LifeHistory, Taxonomy, UnifiedSpecies,
-        CURRENT_LIFE_HISTORY_VERSION,
+        normalize_rank, EvidenceMethod, EvidenceState, ExternalIds, GenomeStats, ImageInfo,
+        Karyotype, LifeHistory, OffspringDevelopment, ReproductiveMode, Taxonomy, TraitEvidence,
+        TraitScope, TraitSource, UnifiedSpecies, CURRENT_LIFE_HISTORY_VERSION,
     };
 
     fn test_species(images: Vec<ImageInfo>) -> UnifiedSpecies {
@@ -417,6 +1067,34 @@ mod tests {
     }
 
     #[test]
+    fn retains_canonical_cached_lineage_and_rebuilds_stale_lineage() {
+        let mut taxonomy = Taxonomy {
+            kingdom: Some("Animalia".to_string()),
+            phylum: Some("Chordata".to_string()),
+            class: Some("Mammalia".to_string()),
+            order: Some("Carnivora".to_string()),
+            family: Some("Felidae".to_string()),
+            genus: Some("Panthera".to_string()),
+            division: None,
+            lineage: Vec::new(),
+        };
+        taxonomy.lineage = taxonomy.build_display_lineage("Panthera leo", "species");
+        taxonomy.lineage[0].tax_id = 42;
+
+        taxonomy.ensure_display_lineage("Panthera leo", "species");
+        assert_eq!(taxonomy.lineage[0].tax_id, 42);
+
+        taxonomy.lineage.push(super::LineageEntry {
+            tax_id: 99,
+            name: "Stale extra entry".to_string(),
+            rank: "Clade".to_string(),
+        });
+        taxonomy.ensure_display_lineage("Panthera leo", "species");
+        assert_eq!(taxonomy.lineage.len(), 7);
+        assert_eq!(taxonomy.lineage[0].tax_id, 0);
+    }
+
+    #[test]
     fn normalizes_rank_names_for_display() {
         assert_eq!(normalize_rank("species"), "Species");
         assert_eq!(normalize_rank("FAMILY"), "Family");
@@ -428,8 +1106,114 @@ mod tests {
         let mut life_history = LifeHistory::default();
         assert!(!life_history.has_any_stats());
 
-        life_history.reproduction_modes.push("Sexual".to_string());
+        life_history.reproductive_traits.add_classified_labels(
+            &["Sexual".to_string()],
+            TraitSource::new("test"),
+            EvidenceMethod::StructuredDataset,
+            TraitScope::default(),
+        );
         assert!(life_history.has_any_stats());
+    }
+
+    #[test]
+    fn migrates_legacy_reproduction_strings_into_sourced_dimensions() {
+        let life_history: LifeHistory = serde_json::from_str(
+            r#"{
+                "extraction_version": 3,
+                "reproduction_modes": ["Sexual", "Oviparous"]
+            }"#,
+        )
+        .expect("legacy life history should deserialize");
+
+        let traits = &life_history.reproductive_traits;
+        assert_eq!(traits.reproductive_modes.state(), EvidenceState::Known);
+        assert_eq!(
+            traits.reproductive_modes.claims()[0].value,
+            ReproductiveMode::Sexual
+        );
+        assert_eq!(
+            traits.offspring_development.claims()[0].value,
+            OffspringDevelopment::Oviparous
+        );
+        assert_eq!(
+            traits.reproductive_modes.claims()[0].method,
+            EvidenceMethod::LegacyMigration
+        );
+
+        let serialized =
+            serde_json::to_string(&life_history).expect("life history should serialize");
+        assert!(serialized.contains("reproductive_traits"));
+        assert!(!serialized.contains("\"reproduction_modes\":[\"Sexual\""));
+    }
+
+    #[test]
+    fn reproductive_summary_keeps_independent_trait_dimensions() {
+        let mut traits = super::ReproductiveTraits::default();
+        let source = TraitSource::new("curated test");
+        let scope = TraitScope::for_taxon("Anas platyrhynchos");
+        traits.add_classified_labels(
+            &["Sexual".to_string(), "Oviparous".to_string()],
+            source.clone(),
+            EvidenceMethod::CuratedLiterature,
+            scope.clone(),
+        );
+        traits.karyotypes.add_claim(TraitEvidence::new(
+            Karyotype::ZzZw,
+            source,
+            EvidenceMethod::CuratedLiterature,
+            scope,
+        ));
+
+        assert_eq!(
+            traits.reproduction_summary().as_deref(),
+            Some("sexual · oviparous")
+        );
+        assert_eq!(traits.sex_determination_summary().as_deref(), Some("ZZ/ZW"));
+    }
+
+    #[test]
+    fn evidence_sets_preserve_variation_and_conflict() {
+        let mut traits = super::ReproductiveTraits::default();
+        let source = TraitSource::new("curated test");
+        traits.reproductive_modes.add_claim(TraitEvidence::new(
+            ReproductiveMode::Sexual,
+            source.clone(),
+            EvidenceMethod::CuratedLiterature,
+            TraitScope::default(),
+        ));
+        traits.reproductive_modes.add_claim(TraitEvidence::new(
+            ReproductiveMode::Asexual,
+            source,
+            EvidenceMethod::CuratedLiterature,
+            TraitScope::default(),
+        ));
+        assert_eq!(traits.reproductive_modes.state(), EvidenceState::Variable);
+        assert_eq!(
+            traits.reproduction_summary().as_deref(),
+            Some("variable · sexual · asexual")
+        );
+
+        traits
+            .reproductive_modes
+            .mark_conflict("sources disagree without population scope");
+        assert_eq!(traits.reproductive_modes.state(), EvidenceState::Conflict);
+        assert_eq!(
+            traits.reproduction_summary().as_deref(),
+            Some("conflicting evidence")
+        );
+    }
+
+    #[test]
+    fn not_applicable_is_not_collapsed_into_unknown() {
+        let mut traits = super::ReproductiveTraits::default();
+        traits
+            .sex_determination
+            .mark_not_applicable("organism has no differentiated sexes");
+
+        assert_eq!(
+            traits.sex_determination_summary().as_deref(),
+            Some("not applicable")
+        );
     }
 
     #[test]

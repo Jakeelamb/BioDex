@@ -47,7 +47,9 @@ pub async fn import_backbone(
 
     println!(
         "Decompressing and importing using {} CPU cores...",
-        num_cpus::get()
+        std::thread::available_parallelism()
+            .map(usize::from)
+            .unwrap_or(1)
     );
 
     // Decompress

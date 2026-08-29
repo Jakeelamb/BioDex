@@ -7,9 +7,7 @@ use serde::Deserialize;
 
 const BASE_URL: &str = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils";
 
-pub struct NcbiClient {
-    client: reqwest::Client,
-}
+pub struct NcbiClient;
 
 #[derive(Debug, Clone)]
 pub struct TaxonomyRecord {
@@ -70,12 +68,7 @@ struct ESearchData {
 
 impl NcbiClient {
     pub fn new() -> Self {
-        Self {
-            client: reqwest::Client::builder()
-                .timeout(std::time::Duration::from_secs(15))
-                .build()
-                .unwrap_or_else(|_| reqwest::Client::new()),
-        }
+        Self
     }
 
     /// Search for a taxon by name and return matching tax IDs
@@ -86,7 +79,7 @@ impl NcbiClient {
             urlencoding::encode(query)
         );
 
-        let response: ESearchResult = self.client.get(&url).send().await?.json().await?;
+        let response: ESearchResult = super::http_client().get(&url).send().await?.json().await?;
 
         let ids: Vec<u64> = response
             .esearchresult
@@ -109,7 +102,7 @@ impl NcbiClient {
             BASE_URL, tax_id
         );
 
-        let response = self.client.get(&url).send().await?.text().await?;
+        let response = super::http_client().get(&url).send().await?.text().await?;
 
         self.parse_taxonomy_xml(&response, tax_id)
     }
@@ -213,7 +206,7 @@ impl NcbiClient {
             urlencoding::encode(query)
         );
 
-        let response: ESearchResult = self.client.get(&url).send().await?.json().await?;
+        let response: ESearchResult = super::http_client().get(&url).send().await?.json().await?;
 
         if response.esearchresult.idlist.is_empty() {
             return Err(ApiError::NotFound(label.to_string()));
@@ -267,7 +260,8 @@ impl NcbiClient {
             BASE_URL, ids_param
         );
 
-        let response: serde_json::Value = self.client.get(&url).send().await?.json().await?;
+        let response: serde_json::Value =
+            super::http_client().get(&url).send().await?.json().await?;
 
         // Parse assembly summaries and find the best one
         let result = response
@@ -333,7 +327,7 @@ impl NcbiClient {
             urlencoding::encode(&query)
         );
 
-        let response: ESearchResult = self.client.get(&url).send().await?.json().await?;
+        let response: ESearchResult = super::http_client().get(&url).send().await?.json().await?;
 
         if response.esearchresult.idlist.is_empty() {
             return Err(ApiError::NotFound("mitochondrial genome".to_string()));
@@ -349,7 +343,8 @@ impl NcbiClient {
             BASE_URL, nuc_id
         );
 
-        let response: serde_json::Value = self.client.get(&url).send().await?.json().await?;
+        let response: serde_json::Value =
+            super::http_client().get(&url).send().await?.json().await?;
 
         // Extract sequence length
         response

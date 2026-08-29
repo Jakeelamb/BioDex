@@ -1,4 +1,7 @@
-use crate::species::{ImageInfo, UnifiedSpecies, CURRENT_LIFE_HISTORY_VERSION};
+use crate::species::{
+    EvidenceMethod, ImageInfo, TraitScope, TraitSource, UnifiedSpecies,
+    CURRENT_LIFE_HISTORY_VERSION,
+};
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::sync::OnceLock;
@@ -132,6 +135,8 @@ struct CuratedAnimalSourceRecord {
     life_history: CuratedAnimalLifeHistory,
     #[serde(default)]
     genome: CuratedAnimalGenome,
+    #[serde(default)]
+    provenance: CuratedAnimalProvenance,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -175,6 +180,19 @@ struct CuratedAnimalLifeHistory {
     reproduction_modes: Vec<String>,
 }
 
+#[derive(Debug, Default, Deserialize)]
+struct CuratedAnimalProvenance {
+    #[serde(default)]
+    reproduction_modes: Vec<CuratedTraitSource>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+struct CuratedTraitSource {
+    dataset: String,
+    url: Option<String>,
+    citation: Option<String>,
+}
+
 static CURATED_ANIMAL_SOURCE_INDEX: OnceLock<HashMap<String, CuratedAnimalSourceRecord>> =
     OnceLock::new();
 
@@ -186,22 +204,19 @@ fn curated_animal_sources() -> &'static HashMap<String, CuratedAnimalSourceRecor
         parsed
             .species
             .into_iter()
-            .map(|record| (record.scientific_name.to_ascii_lowercase(), record))
+            .map(|record| (record.scientific_name.clone(), record))
             .collect()
     })
 }
 
-pub fn canonical_curated_species_name(name: &str) -> Option<&'static str> {
-    CURATED_ANIMAL_SPECIES
-        .iter()
-        .copied()
-        .find(|candidate| candidate.eq_ignore_ascii_case(name.trim()))
-}
-
 pub fn apply_curated_animal_supplement(species: &mut UnifiedSpecies) {
-    let Some(supplement) =
-        curated_animal_sources().get(&species.scientific_name.to_ascii_lowercase())
-    else {
+    let sources = curated_animal_sources();
+    let Some(supplement) = sources.get(&species.scientific_name).or_else(|| {
+        sources
+            .iter()
+            .find(|(name, _)| name.eq_ignore_ascii_case(&species.scientific_name))
+            .map(|(_, record)| record)
+    }) else {
         return;
     };
 
@@ -260,15 +275,31 @@ pub fn apply_curated_animal_supplement(species: &mut UnifiedSpecies) {
     if species.life_history.mass_kilograms.is_none() {
         species.life_history.mass_kilograms = supplement.life_history.mass_kilograms;
     }
-    for mode in &supplement.life_history.reproduction_modes {
-        if !species
+    let reproduction_sources = if supplement.provenance.reproduction_modes.is_empty() {
+        vec![CuratedTraitSource {
+            dataset: "BioDex curated animal pack".to_string(),
+            ..CuratedTraitSource::default()
+        }]
+    } else {
+        supplement.provenance.reproduction_modes.clone()
+    };
+    for source in reproduction_sources {
+        species
             .life_history
-            .reproduction_modes
-            .iter()
-            .any(|current| current.eq_ignore_ascii_case(mode))
-        {
-            species.life_history.reproduction_modes.push(mode.clone());
-        }
+            .reproductive_traits
+            .add_classified_labels(
+                &supplement.life_history.reproduction_modes,
+                TraitSource {
+                    dataset: source.dataset,
+                    record_id: None,
+                    url: source.url,
+                    citation: source.citation,
+                    version: None,
+                    retrieved_at_unix: None,
+                },
+                EvidenceMethod::StructuredDataset,
+                TraitScope::for_taxon(&species.scientific_name),
+            );
     }
 
     if species.genome.assembly_accession.is_none() {
@@ -307,7 +338,7 @@ pub fn apply_curated_animal_supplement(species: &mut UnifiedSpecies) {
             || species.life_history.length_meters.is_some()
             || species.life_history.height_meters.is_some()
             || species.life_history.mass_kilograms.is_some()
-            || !species.life_history.reproduction_modes.is_empty())
+            || species.life_history.reproductive_traits.has_any())
     {
         species.life_history.extraction_version = CURRENT_LIFE_HISTORY_VERSION;
     }

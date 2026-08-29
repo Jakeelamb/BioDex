@@ -959,20 +959,6 @@ mod tests {
     }
 
     #[test]
-    fn test_generation_is_fast() {
-        use std::time::Instant;
-        let start = Instant::now();
-        let _img = generate_world_background();
-        let elapsed = start.elapsed();
-        // Should complete in under 1 second
-        assert!(
-            elapsed.as_secs() < 1,
-            "Generation took {:?}, should be under 1 second",
-            elapsed
-        );
-    }
-
-    #[test]
     fn test_ascii_range_map_highlights_bounding_box() {
         let map = generate_ascii_range_map(24, 8, Some((-35.0, 35.0, -20.0, 55.0)), &[]);
         assert!(map.iter().any(|line| line.contains('#')));

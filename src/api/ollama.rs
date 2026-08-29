@@ -9,7 +9,6 @@ const DEFAULT_OLLAMA_TIMEOUT_SECS: u64 = 15;
 const OLLAMA_CONTEXT_LIMIT_CHARS: usize = 12_000;
 
 pub struct OllamaClient {
-    client: reqwest::Client,
     endpoint: String,
     model: String,
     timeout: Duration,
@@ -66,13 +65,7 @@ impl OllamaClient {
             .map(Duration::from_secs)
             .unwrap_or_else(|| Duration::from_secs(DEFAULT_OLLAMA_TIMEOUT_SECS));
 
-        let client = reqwest::Client::builder()
-            .timeout(timeout)
-            .build()
-            .unwrap_or_else(|_| reqwest::Client::new());
-
         Self {
-            client,
             endpoint,
             model,
             timeout,
@@ -101,9 +94,9 @@ impl OllamaClient {
         };
 
         let payload = tokio::time::timeout(self.timeout, async {
-            let response = self
-                .client
+            let response = super::http_client()
                 .post(format!("{}/api/generate", self.endpoint))
+                .timeout(self.timeout)
                 .json(&request)
                 .send()
                 .await?;

@@ -8,9 +8,7 @@ use serde::Deserialize;
 const BASE_URL: &str = "https://api.gbif.org/v1";
 const MAP_URL: &str = "https://api.gbif.org/v2/map/occurrence/density";
 
-pub struct GbifClient {
-    client: reqwest::Client,
-}
+pub struct GbifClient;
 
 #[derive(Debug, Clone)]
 pub struct Species {
@@ -114,12 +112,7 @@ struct OccurrenceResult {
 
 impl GbifClient {
     pub fn new() -> Self {
-        Self {
-            client: reqwest::Client::builder()
-                .timeout(std::time::Duration::from_secs(15))
-                .build()
-                .unwrap_or_else(|_| reqwest::Client::new()),
-        }
+        Self
     }
 
     /// Search for species by name
@@ -130,7 +123,8 @@ impl GbifClient {
             urlencoding::encode(query)
         );
 
-        let response: SpeciesSearchResponse = self.client.get(&url).send().await?.json().await?;
+        let response: SpeciesSearchResponse =
+            super::http_client().get(&url).send().await?.json().await?;
 
         if response.results.is_empty() {
             return Err(ApiError::NotFound(query.to_string()));
@@ -147,7 +141,7 @@ impl GbifClient {
     pub async fn get_species(&self, species_key: u64) -> Result<Species> {
         let url = format!("{}/species/{}", BASE_URL, species_key);
 
-        let response: SpeciesResult = self.client.get(&url).send().await?.json().await?;
+        let response: SpeciesResult = super::http_client().get(&url).send().await?.json().await?;
 
         Ok(Self::convert_species(response))
     }
@@ -160,7 +154,7 @@ impl GbifClient {
             urlencoding::encode(name)
         );
 
-        let response: SpeciesResult = self.client.get(&url).send().await?.json().await?;
+        let response: SpeciesResult = super::http_client().get(&url).send().await?.json().await?;
 
         Ok(Self::convert_species(response))
     }
@@ -172,7 +166,8 @@ impl GbifClient {
             BASE_URL, species_key, limit
         );
 
-        let response: OccurrenceSearchResponse = self.client.get(&url).send().await?.json().await?;
+        let response: OccurrenceSearchResponse =
+            super::http_client().get(&url).send().await?.json().await?;
 
         Ok(response
             .results
@@ -188,7 +183,8 @@ impl GbifClient {
             BASE_URL, species_key
         );
 
-        let response: serde_json::Value = self.client.get(&url).send().await?.json().await?;
+        let response: serde_json::Value =
+            super::http_client().get(&url).send().await?.json().await?;
 
         let mut counts = Vec::new();
 
@@ -223,7 +219,8 @@ impl GbifClient {
             BASE_URL, species_key
         );
 
-        let response: serde_json::Value = self.client.get(&url).send().await?.json().await?;
+        let response: serde_json::Value =
+            super::http_client().get(&url).send().await?.json().await?;
 
         let mut continents = Vec::new();
 
@@ -252,7 +249,8 @@ impl GbifClient {
             BASE_URL, species_key
         );
 
-        let response: serde_json::Value = self.client.get(&url).send().await?.json().await?;
+        let response: serde_json::Value =
+            super::http_client().get(&url).send().await?.json().await?;
 
         let mut min_lat = 90.0_f64;
         let mut max_lat = -90.0_f64;
@@ -303,7 +301,8 @@ impl GbifClient {
             BASE_URL, species_key
         );
 
-        let response: serde_json::Value = self.client.get(&url).send().await?.json().await?;
+        let response: serde_json::Value =
+            super::http_client().get(&url).send().await?.json().await?;
 
         let mut counts = Vec::new();
 
@@ -326,7 +325,7 @@ impl GbifClient {
             }
         }
 
-        counts.sort_by(|a, b| a.year.cmp(&b.year));
+        counts.sort_by_key(|count| count.year);
         Ok(counts)
     }
 
@@ -337,7 +336,8 @@ impl GbifClient {
             BASE_URL, species_key
         );
 
-        let response: serde_json::Value = self.client.get(&url).send().await?.json().await?;
+        let response: serde_json::Value =
+            super::http_client().get(&url).send().await?.json().await?;
 
         response
             .get("count")
@@ -354,7 +354,8 @@ impl GbifClient {
             limit
         );
 
-        let response: serde_json::Value = self.client.get(&url).send().await?.json().await?;
+        let response: serde_json::Value =
+            super::http_client().get(&url).send().await?.json().await?;
 
         let mut suggestions = Vec::new();
 
@@ -405,7 +406,7 @@ impl GbifClient {
     pub async fn get_map_image(&self, species_key: u64) -> Result<Vec<u8>> {
         let url = self.get_map_image_url(species_key);
 
-        let response = self.client.get(&url).send().await?;
+        let response = super::http_client().get(&url).send().await?;
 
         if !response.status().is_success() {
             return Err(ApiError::Api(format!(
@@ -427,7 +428,8 @@ impl GbifClient {
     ) -> Result<u64> {
         let url = format!("{}/species/{}", BASE_URL, species_key);
 
-        let response: serde_json::Value = self.client.get(&url).send().await?.json().await?;
+        let response: serde_json::Value =
+            super::http_client().get(&url).send().await?.json().await?;
 
         // Map target rank to the parent rank's key field
         // To get siblings at a rank, we need the parent (one level up)
@@ -454,7 +456,8 @@ impl GbifClient {
     pub async fn get_children(&self, parent_key: u64, rank: &str) -> Result<Vec<Species>> {
         let url = format!("{}/species/{}/children?limit=100", BASE_URL, parent_key);
 
-        let response: serde_json::Value = self.client.get(&url).send().await?.json().await?;
+        let response: serde_json::Value =
+            super::http_client().get(&url).send().await?.json().await?;
 
         let mut children = Vec::new();
 

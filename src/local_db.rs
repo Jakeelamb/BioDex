@@ -1274,17 +1274,6 @@ impl LocalDatabase {
 
         rows.collect()
     }
-
-    // ==================== Maintenance ====================
-
-    /// Force refresh a specific species (delete from cache)
-    pub fn invalidate_species(&self, scientific_name: &str) -> rusqlite::Result<()> {
-        self.conn.execute(
-            "DELETE FROM species WHERE scientific_name = ?1",
-            params![scientific_name.to_lowercase()],
-        )?;
-        Ok(())
-    }
 }
 
 #[cfg(test)]

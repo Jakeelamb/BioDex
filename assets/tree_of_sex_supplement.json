@@ -1,0 +1,821 @@
+{
+  "dataset": {
+    "name": "Tree of Sex",
+    "version": "2014-05-19",
+    "url": "https://doi.org/10.5061/dryad.v1908",
+    "citation": "The Tree of Sex Consortium (2014). Tree of Sex: a database of sexual systems. Scientific Data 1:140015. doi:10.1038/sdata.2014.15"
+  },
+  "records": [
+    {
+      "scientific_name": "Acinonyx jubatus",
+      "record_id": "vertebrate:1148",
+      "fields": {
+        "sexual_system": "gonochorous",
+        "karyotype": "XY",
+        "genotypic": "male heterogametic"
+      },
+      "citations": {
+        "sexual_system": "Hsu T.C., Benirschke K. (1971) An Atlas of Mammalian Chromosomes, Volume 5, Springer-Verlag, New York.",
+        "karyotype": "Hsu T.C., Benirschke K. (1971) An Atlas of Mammalian Chromosomes, Volume 5, Springer-Verlag, New York.",
+        "genotypic": "Hsu T.C., Benirschke K. (1971) An Atlas of Mammalian Chromosomes, Volume 5, Springer-Verlag, New York."
+      },
+      "notes": ""
+    },
+    {
+      "scientific_name": "Alces alces",
+      "record_id": "vertebrate:1116",
+      "fields": {
+        "sexual_system": "gonochorous",
+        "karyotype": "XY",
+        "genotypic": "male heterogametic"
+      },
+      "citations": {
+        "sexual_system": "Hsu T.C., Benirschke K. (1969) An Atlas of Mammalian Chromosomes, Volume 3, Springer-Verlag, New York.",
+        "karyotype": "Hsu T.C., Benirschke K. (1969) An Atlas of Mammalian Chromosomes, Volume 3, Springer-Verlag, New York.",
+        "genotypic": "Hsu T.C., Benirschke K. (1969) An Atlas of Mammalian Chromosomes, Volume 3, Springer-Verlag, New York."
+      },
+      "notes": ""
+    },
+    {
+      "scientific_name": "Alligator mississippiensis",
+      "record_id": "vertebrate:1648",
+      "fields": {
+        "sexual_system": "gonochorous",
+        "environmental": "TSD II"
+      },
+      "citations": {
+        "sexual_system": "Deeming D.C. (2004) Prevalence of TSD in Crocodilians. In: Temperature dependent sex determination in vertebrates (eds. Valenzuela N, Lance VA), pp. 33-41. Smithsonian Books, Washington, DC.",
+        "environmental": "Deeming D.C. (2004) Prevalence of TSD in Crocodilians. In: Temperature dependent sex determination in vertebrates (eds. Valenzuela N, Lance VA), pp. 33-41. Smithsonian Books, Washington, DC."
+      },
+      "notes": ""
+    },
+    {
+      "scientific_name": "Anas platyrhynchos",
+      "record_id": "vertebrate:185",
+      "fields": {
+        "sexual_system": "gonochorous",
+        "karyotype": "ZW",
+        "genotypic": "female heterogametic"
+      },
+      "citations": {
+        "sexual_system": "Rutkowska J. et al. (2012) Biology Letters 8: 636-638",
+        "karyotype": "Rutkowska J. et al. (2012) Biology Letters 8: 636-638",
+        "genotypic": "Rutkowska J. et al. (2012) Biology Letters 8: 636-638"
+      },
+      "notes": ""
+    },
+    {
+      "scientific_name": "Anser anser",
+      "record_id": "vertebrate:187",
+      "fields": {
+        "sexual_system": "gonochorous",
+        "karyotype": "ZW",
+        "genotypic": "female heterogametic"
+      },
+      "citations": {
+        "sexual_system": "Rutkowska J. et al. (2012) Biology Letters 8: 636-638",
+        "karyotype": "Rutkowska J. et al. (2012) Biology Letters 8: 636-638",
+        "genotypic": "Rutkowska J. et al. (2012) Biology Letters 8: 636-638"
+      },
+      "notes": ""
+    },
+    {
+      "scientific_name": "Anser cygnoides",
+      "record_id": "vertebrate:188",
+      "fields": {
+        "sexual_system": "gonochorous",
+        "karyotype": "ZW",
+        "genotypic": "female heterogametic"
+      },
+      "citations": {
+        "sexual_system": "Rutkowska J. et al. (2012) Biology Letters 8: 636-638",
+        "karyotype": "Rutkowska J. et al. (2012) Biology Letters 8: 636-638",
+        "genotypic": "Rutkowska J. et al. (2012) Biology Letters 8: 636-638"
+      },
+      "notes": ""
+    },
+    {
+      "scientific_name": "Bison bison",
+      "record_id": "vertebrate:1081",
+      "fields": {
+        "sexual_system": "gonochorous",
+        "karyotype": "XY",
+        "genotypic": "male heterogametic"
+      },
+      "citations": {
+        "sexual_system": "Hsu T.C., Benirschke K. (1969) An Atlas of Mammalian Chromosomes, Volume 3, Springer-Verlag, New York.",
+        "karyotype": "Hsu T.C., Benirschke K. (1969) An Atlas of Mammalian Chromosomes, Volume 3, Springer-Verlag, New York.",
+        "genotypic": "Hsu T.C., Benirschke K. (1969) An Atlas of Mammalian Chromosomes, Volume 3, Springer-Verlag, New York."
+      },
+      "notes": ""
+    },
+    {
+      "scientific_name": "Bos taurus",
+      "record_id": "vertebrate:1083",
+      "fields": {
+        "sexual_system": "gonochorous",
+        "karyotype": "XY",
+        "genotypic": "male heterogametic"
+      },
+      "citations": {
+        "sexual_system": "Hsu T.C., Benirschke K. (1967) An Atlas of Mammalian Chromosomes, Volume 1, Springer-Verlag, New York.",
+        "karyotype": "Hsu T.C., Benirschke K. (1967) An Atlas of Mammalian Chromosomes, Volume 1, Springer-Verlag, New York.",
+        "genotypic": "Hsu T.C., Benirschke K. (1967) An Atlas of Mammalian Chromosomes, Volume 1, Springer-Verlag, New York."
+      },
+      "notes": ""
+    },
+    {
+      "scientific_name": "Bubalus bubalis",
+      "record_id": "vertebrate:1085",
+      "fields": {
+        "sexual_system": "gonochorous",
+        "karyotype": "XY",
+        "genotypic": "male heterogametic"
+      },
+      "citations": {
+        "sexual_system": "Hsu T.C., Benirschke K. (1969) An Atlas of Mammalian Chromosomes, Volume 3, Springer-Verlag, New York.",
+        "karyotype": "Hsu T.C., Benirschke K. (1969) An Atlas of Mammalian Chromosomes, Volume 3, Springer-Verlag, New York.",
+        "genotypic": "Hsu T.C., Benirschke K. (1969) An Atlas of Mammalian Chromosomes, Volume 3, Springer-Verlag, New York."
+      },
+      "notes": ""
+    },
+    {
+      "scientific_name": "Bubalus bubalis",
+      "record_id": "vertebrate:1086",
+      "fields": {
+        "sexual_system": "gonochorous",
+        "karyotype": "XY",
+        "genotypic": "male heterogametic"
+      },
+      "citations": {
+        "sexual_system": "Hsu T.C., Benirschke K. (1968) An Atlas of Mammalian Chromosomes, Volume 2, Springer-Verlag, New York.",
+        "karyotype": "Hsu T.C., Benirschke K. (1968) An Atlas of Mammalian Chromosomes, Volume 2, Springer-Verlag, New York.",
+        "genotypic": "Hsu T.C., Benirschke K. (1968) An Atlas of Mammalian Chromosomes, Volume 2, Springer-Verlag, New York."
+      },
+      "notes": ""
+    },
+    {
+      "scientific_name": "Bubo bubo",
+      "record_id": "vertebrate:360",
+      "fields": {
+        "sexual_system": "gonochorous",
+        "karyotype": "ZW",
+        "genotypic": "female heterogametic"
+      },
+      "citations": {
+        "sexual_system": "Rutkowska J. et al. (2012) Biology Letters 8: 636-638",
+        "karyotype": "Rutkowska J. et al. (2012) Biology Letters 8: 636-638",
+        "genotypic": "Rutkowska J. et al. (2012) Biology Letters 8: 636-638"
+      },
+      "notes": ""
+    },
+    {
+      "scientific_name": "Caiman crocodilus",
+      "record_id": "vertebrate:1650",
+      "fields": {
+        "sexual_system": "gonochorous",
+        "environmental": "TSD II"
+      },
+      "citations": {
+        "sexual_system": "Deeming D.C. (2004) Prevalence of TSD in Crocodilians. In: Temperature dependent sex determination in vertebrates (eds. Valenzuela N, Lance VA), pp. 33-41. Smithsonian Books, Washington, DC.",
+        "environmental": "Deeming D.C. (2004) Prevalence of TSD in Crocodilians. In: Temperature dependent sex determination in vertebrates (eds. Valenzuela N, Lance VA), pp. 33-41. Smithsonian Books, Washington, DC."
+      },
+      "notes": ""
+    },
+    {
+      "scientific_name": "Callithrix jacchus",
+      "record_id": "vertebrate:1325",
+      "fields": {
+        "sexual_system": "gonochorous",
+        "karyotype": "XY",
+        "genotypic": "male heterogametic"
+      },
+      "citations": {
+        "sexual_system": "Hsu T.C., Benirschke K. (1967) An Atlas of Mammalian Chromosomes, Volume 1, Springer-Verlag, New York.",
+        "karyotype": "Hsu T.C., Benirschke K. (1967) An Atlas of Mammalian Chromosomes, Volume 1, Springer-Verlag, New York.",
+        "genotypic": "Hsu T.C., Benirschke K. (1967) An Atlas of Mammalian Chromosomes, Volume 1, Springer-Verlag, New York."
+      },
+      "notes": ""
+    },
+    {
+      "scientific_name": "Calypte anna",
+      "record_id": "vertebrate:209",
+      "fields": {
+        "sexual_system": "gonochorous",
+        "karyotype": "ZW",
+        "genotypic": "female heterogametic"
+      },
+      "citations": {
+        "sexual_system": "Rutkowska J. et al. (2012) Biology Letters 8: 636-638",
+        "karyotype": "Rutkowska J. et al. (2012) Biology Letters 8: 636-638",
+        "genotypic": "Rutkowska J. et al. (2012) Biology Letters 8: 636-638"
+      },
+      "notes": ""
+    },
+    {
+      "scientific_name": "Camelus bactrianus",
+      "record_id": "vertebrate:1114",
+      "fields": {
+        "sexual_system": "gonochorous",
+        "karyotype": "XY",
+        "genotypic": "male heterogametic"
+      },
+      "citations": {
+        "sexual_system": "Hsu T.C., Benirschke K. (1974) An Atlas of Mammalian Chromosomes, Volume 8, Springer-Verlag, New York.",
+        "karyotype": "Hsu T.C., Benirschke K. (1974) An Atlas of Mammalian Chromosomes, Volume 8, Springer-Verlag, New York.",
+        "genotypic": "Hsu T.C., Benirschke K. (1974) An Atlas of Mammalian Chromosomes, Volume 8, Springer-Verlag, New York."
+      },
+      "notes": ""
+    },
+    {
+      "scientific_name": "Cavia porcellus",
+      "record_id": "vertebrate:1375",
+      "fields": {
+        "sexual_system": "gonochorous",
+        "karyotype": "XY",
+        "genotypic": "male heterogametic"
+      },
+      "citations": {
+        "sexual_system": "Hsu T.C., Benirschke K. (1968) An Atlas of Mammalian Chromosomes, Volume 2, Springer-Verlag, New York.",
+        "karyotype": "Hsu T.C., Benirschke K. (1968) An Atlas of Mammalian Chromosomes, Volume 2, Springer-Verlag, New York.",
+        "genotypic": "Hsu T.C., Benirschke K. (1968) An Atlas of Mammalian Chromosomes, Volume 2, Springer-Verlag, New York."
+      },
+      "notes": ""
+    },
+    {
+      "scientific_name": "Cervus elaphus",
+      "record_id": "vertebrate:1119",
+      "fields": {
+        "sexual_system": "gonochorous",
+        "karyotype": "XY",
+        "genotypic": "male heterogametic"
+      },
+      "citations": {
+        "sexual_system": "Hsu T.C., Benirschke K. (1969) An Atlas of Mammalian Chromosomes, Volume 3, Springer-Verlag, New York.",
+        "karyotype": "Hsu T.C., Benirschke K. (1969) An Atlas of Mammalian Chromosomes, Volume 3, Springer-Verlag, New York.",
+        "genotypic": "Hsu T.C., Benirschke K. (1969) An Atlas of Mammalian Chromosomes, Volume 3, Springer-Verlag, New York."
+      },
+      "notes": ""
+    },
+    {
+      "scientific_name": "Ciconia ciconia",
+      "record_id": "vertebrate:231",
+      "fields": {
+        "sexual_system": "gonochorous",
+        "karyotype": "ZW",
+        "genotypic": "female heterogametic"
+      },
+      "citations": {
+        "sexual_system": "Rutkowska J. et al. (2012) Biology Letters 8: 636-638",
+        "karyotype": "Rutkowska J. et al. (2012) Biology Letters 8: 636-638",
+        "genotypic": "Rutkowska J. et al. (2012) Biology Letters 8: 636-638"
+      },
+      "notes": ""
+    },
+    {
+      "scientific_name": "Corvus brachyrhynchos",
+      "record_id": "vertebrate:275",
+      "fields": {
+        "sexual_system": "gonochorous",
+        "karyotype": "ZW",
+        "genotypic": "female heterogametic"
+      },
+      "citations": {
+        "sexual_system": "Rutkowska J. et al. (2012) Biology Letters 8: 636-638",
+        "karyotype": "Rutkowska J. et al. (2012) Biology Letters 8: 636-638",
+        "genotypic": "Rutkowska J. et al. (2012) Biology Letters 8: 636-638"
+      },
+      "notes": ""
+    },
+    {
+      "scientific_name": "Corvus corax",
+      "record_id": "vertebrate:276",
+      "fields": {
+        "sexual_system": "gonochorous",
+        "karyotype": "ZW",
+        "genotypic": "female heterogametic"
+      },
+      "citations": {
+        "sexual_system": "Rutkowska J. et al. (2012) Biology Letters 8: 636-638",
+        "karyotype": "Rutkowska J. et al. (2012) Biology Letters 8: 636-638",
+        "genotypic": "Rutkowska J. et al. (2012) Biology Letters 8: 636-638"
+      },
+      "notes": ""
+    },
+    {
+      "scientific_name": "Enhydra lutris",
+      "record_id": "vertebrate:1173",
+      "fields": {
+        "sexual_system": "gonochorous",
+        "karyotype": "XY",
+        "genotypic": "male heterogametic"
+      },
+      "citations": {
+        "sexual_system": "Hsu T.C., Benirschke K. (1970) An Atlas of Mammalian Chromosomes, Volume 4, Springer-Verlag, New York.",
+        "karyotype": "Hsu T.C., Benirschke K. (1970) An Atlas of Mammalian Chromosomes, Volume 4, Springer-Verlag, New York.",
+        "genotypic": "Hsu T.C., Benirschke K. (1970) An Atlas of Mammalian Chromosomes, Volume 4, Springer-Verlag, New York."
+      },
+      "notes": ""
+    },
+    {
+      "scientific_name": "Erinaceus europaeus",
+      "record_id": "vertebrate:1252",
+      "fields": {
+        "sexual_system": "gonochorous",
+        "karyotype": "XY",
+        "genotypic": "male heterogametic"
+      },
+      "citations": {
+        "sexual_system": "Hsu T.C., Benirschke K. (1968) An Atlas of Mammalian Chromosomes, Volume 2, Springer-Verlag, New York.",
+        "karyotype": "Hsu T.C., Benirschke K. (1968) An Atlas of Mammalian Chromosomes, Volume 2, Springer-Verlag, New York.",
+        "genotypic": "Hsu T.C., Benirschke K. (1968) An Atlas of Mammalian Chromosomes, Volume 2, Springer-Verlag, New York."
+      },
+      "notes": ""
+    },
+    {
+      "scientific_name": "Eublepharis macularius",
+      "record_id": "vertebrate:1851",
+      "fields": {
+        "sexual_system": "gonochorous",
+        "environmental": "TSD II"
+      },
+      "citations": {
+        "sexual_system": "Viets B.E., Ewert M.A., Talent L.G., Nelson C.E. (1994) Sex-determining mechanisms in squamate reptiles. The Journal of Experimental Zoology 270: 45-56.",
+        "environmental": "Viets B.E., Ewert M.A., Talent L.G., Nelson C.E. (1994) Sex-determining mechanisms in squamate reptiles. The Journal of Experimental Zoology 270: 45-56."
+      },
+      "notes": ""
+    },
+    {
+      "scientific_name": "Felis catus",
+      "record_id": "vertebrate:1150",
+      "fields": {
+        "sexual_system": "gonochorous",
+        "karyotype": "XY",
+        "genotypic": "male heterogametic"
+      },
+      "citations": {
+        "sexual_system": "Hsu T.C., Benirschke K. (1967) An Atlas of Mammalian Chromosomes, Volume 1, Springer-Verlag, New York.",
+        "karyotype": "Hsu T.C., Benirschke K. (1967) An Atlas of Mammalian Chromosomes, Volume 1, Springer-Verlag, New York.",
+        "genotypic": "Hsu T.C., Benirschke K. (1967) An Atlas of Mammalian Chromosomes, Volume 1, Springer-Verlag, New York."
+      },
+      "notes": ""
+    },
+    {
+      "scientific_name": "Gallus gallus",
+      "record_id": "vertebrate:261",
+      "fields": {
+        "sexual_system": "gonochorous",
+        "karyotype": "ZW",
+        "genotypic": "female heterogametic"
+      },
+      "citations": {
+        "sexual_system": "Rutkowska J. et al. (2012) Biology Letters 8: 636-638",
+        "karyotype": "Rutkowska J. et al. (2012) Biology Letters 8: 636-638",
+        "genotypic": "Rutkowska J. et al. (2012) Biology Letters 8: 636-638"
+      },
+      "notes": "was domestius"
+    },
+    {
+      "scientific_name": "Homo sapiens",
+      "record_id": "vertebrate:1353",
+      "fields": {
+        "sexual_system": "gonochorous",
+        "karyotype": "XY",
+        "genotypic": "male heterogametic"
+      },
+      "citations": {
+        "sexual_system": "Hsu T.C., Benirschke K. (1967) An Atlas of Mammalian Chromosomes, Volume 1, Springer-Verlag, New York.",
+        "karyotype": "Hsu T.C., Benirschke K. (1967) An Atlas of Mammalian Chromosomes, Volume 1, Springer-Verlag, New York.",
+        "genotypic": "Hsu T.C., Benirschke K. (1967) An Atlas of Mammalian Chromosomes, Volume 1, Springer-Verlag, New York."
+      },
+      "notes": ""
+    },
+    {
+      "scientific_name": "Macropus rufus",
+      "record_id": "vertebrate:1284",
+      "fields": {
+        "sexual_system": "gonochorous",
+        "karyotype": "XY",
+        "genotypic": "male heterogametic"
+      },
+      "citations": {
+        "sexual_system": "Hsu T.C., Benirschke K. (1974) An Atlas of Mammalian Chromosomes, Volume 8, Springer-Verlag, New York.",
+        "karyotype": "Hsu T.C., Benirschke K. (1974) An Atlas of Mammalian Chromosomes, Volume 8, Springer-Verlag, New York.",
+        "genotypic": "Hsu T.C., Benirschke K. (1974) An Atlas of Mammalian Chromosomes, Volume 8, Springer-Verlag, New York."
+      },
+      "notes": ""
+    },
+    {
+      "scientific_name": "Marmota marmota",
+      "record_id": "vertebrate:1533",
+      "fields": {
+        "sexual_system": "gonochorous",
+        "karyotype": "XY",
+        "genotypic": "male heterogametic"
+      },
+      "citations": {
+        "sexual_system": "Hsu T.C., Benirschke K. (1974) An Atlas of Mammalian Chromosomes, Volume 8, Springer-Verlag, New York.",
+        "karyotype": "Hsu T.C., Benirschke K. (1974) An Atlas of Mammalian Chromosomes, Volume 8, Springer-Verlag, New York.",
+        "genotypic": "Hsu T.C., Benirschke K. (1974) An Atlas of Mammalian Chromosomes, Volume 8, Springer-Verlag, New York."
+      },
+      "notes": ""
+    },
+    {
+      "scientific_name": "Marmota monax",
+      "record_id": "vertebrate:1534",
+      "fields": {
+        "sexual_system": "gonochorous",
+        "karyotype": "XY",
+        "genotypic": "male heterogametic"
+      },
+      "citations": {
+        "sexual_system": "Hsu T.C., Benirschke K. (1967) An Atlas of Mammalian Chromosomes, Volume 1, Springer-Verlag, New York.",
+        "karyotype": "Hsu T.C., Benirschke K. (1967) An Atlas of Mammalian Chromosomes, Volume 1, Springer-Verlag, New York.",
+        "genotypic": "Hsu T.C., Benirschke K. (1967) An Atlas of Mammalian Chromosomes, Volume 1, Springer-Verlag, New York."
+      },
+      "notes": ""
+    },
+    {
+      "scientific_name": "Meleagris gallopavo",
+      "record_id": "vertebrate:264",
+      "fields": {
+        "sexual_system": "gonochorous",
+        "karyotype": "ZW",
+        "genotypic": "female heterogametic"
+      },
+      "citations": {
+        "sexual_system": "Rutkowska J. et al. (2012) Biology Letters 8: 636-638",
+        "karyotype": "Rutkowska J. et al. (2012) Biology Letters 8: 636-638",
+        "genotypic": "Rutkowska J. et al. (2012) Biology Letters 8: 636-638"
+      },
+      "notes": ""
+    },
+    {
+      "scientific_name": "Mus musculus",
+      "record_id": "vertebrate:1498",
+      "fields": {
+        "sexual_system": "gonochorous",
+        "karyotype": "XY",
+        "genotypic": "male heterogametic"
+      },
+      "citations": {
+        "sexual_system": "Hsu T.C., Benirschke K. (1967) An Atlas of Mammalian Chromosomes, Volume 1, Springer-Verlag, New York.",
+        "karyotype": "Hsu T.C., Benirschke K. (1967) An Atlas of Mammalian Chromosomes, Volume 1, Springer-Verlag, New York.",
+        "genotypic": "Hsu T.C., Benirschke K. (1967) An Atlas of Mammalian Chromosomes, Volume 1, Springer-Verlag, New York."
+      },
+      "notes": ""
+    },
+    {
+      "scientific_name": "Nymphicus hollandicus",
+      "record_id": "vertebrate:347",
+      "fields": {
+        "sexual_system": "gonochorous",
+        "karyotype": "ZW",
+        "genotypic": "female heterogametic"
+      },
+      "citations": {
+        "sexual_system": "Rutkowska J. et al. (2012) Biology Letters 8: 636-638",
+        "karyotype": "Rutkowska J. et al. (2012) Biology Letters 8: 636-638",
+        "genotypic": "Rutkowska J. et al. (2012) Biology Letters 8: 636-638"
+      },
+      "notes": ""
+    },
+    {
+      "scientific_name": "Odocoileus virginianus",
+      "record_id": "vertebrate:1128",
+      "fields": {
+        "sexual_system": "gonochorous",
+        "karyotype": "XY",
+        "genotypic": "male heterogametic"
+      },
+      "citations": {
+        "sexual_system": "Hsu T.C., Benirschke K. (1967) An Atlas of Mammalian Chromosomes, Volume 1, Springer-Verlag, New York.",
+        "karyotype": "Hsu T.C., Benirschke K. (1967) An Atlas of Mammalian Chromosomes, Volume 1, Springer-Verlag, New York.",
+        "genotypic": "Hsu T.C., Benirschke K. (1967) An Atlas of Mammalian Chromosomes, Volume 1, Springer-Verlag, New York."
+      },
+      "notes": ""
+    },
+    {
+      "scientific_name": "Oncorhynchus mykiss",
+      "record_id": "vertebrate:1002",
+      "fields": {
+        "sexual_system": "gonochorous",
+        "karyotype": "homomorphic",
+        "genotypic": "male heterogametic"
+      },
+      "citations": {
+        "sexual_system": "Chourrout D. (1986) Bulletin de la Societe Zoologique de France 113: 123-144",
+        "karyotype": "Chourrout D. (1986) Bulletin de la Societe Zoologique de France 113: 123-144",
+        "genotypic": "Chourrout D. (1986) Bulletin de la Societe Zoologique de France 113: 123-144"
+      },
+      "notes": ""
+    },
+    {
+      "scientific_name": "Ornithorhynchus anatinus",
+      "record_id": "vertebrate:1288",
+      "fields": {
+        "sexual_system": "gonochorous",
+        "karyotype": "complex XY",
+        "genotypic": "male heterogametic"
+      },
+      "citations": {
+        "sexual_system": "Grutzner F. et al. (2004) In the platypus a meiotic chain of ten sex chromosomes shares genes with the bird Z and mammal X chromosomes. Nature 432: 913-917.",
+        "karyotype": "Grutzner F. et al. (2004) In the platypus a meiotic chain of ten sex chromosomes shares genes with the bird Z and mammal X chromosomes. Nature 432: 913-917.",
+        "genotypic": "Grutzner F. et al. (2004) In the platypus a meiotic chain of ten sex chromosomes shares genes with the bird Z and mammal X chromosomes. Nature 432: 913-917."
+      },
+      "notes": "X1X2X3X4X5Y1Y2Y3Y4Y5"
+    },
+    {
+      "scientific_name": "Oryctolagus cuniculus",
+      "record_id": "vertebrate:1266",
+      "fields": {
+        "sexual_system": "gonochorous",
+        "karyotype": "XY",
+        "genotypic": "male heterogametic"
+      },
+      "citations": {
+        "sexual_system": "Hsu T.C., Benirschke K. (1967) An Atlas of Mammalian Chromosomes, Volume 1, Springer-Verlag, New York.",
+        "karyotype": "Hsu T.C., Benirschke K. (1967) An Atlas of Mammalian Chromosomes, Volume 1, Springer-Verlag, New York.",
+        "genotypic": "Hsu T.C., Benirschke K. (1967) An Atlas of Mammalian Chromosomes, Volume 1, Springer-Verlag, New York."
+      },
+      "notes": ""
+    },
+    {
+      "scientific_name": "Pan troglodytes",
+      "record_id": "vertebrate:1355",
+      "fields": {
+        "sexual_system": "gonochorous",
+        "karyotype": "XY",
+        "genotypic": "male heterogametic"
+      },
+      "citations": {
+        "sexual_system": "Hsu T.C., Benirschke K. (1967) An Atlas of Mammalian Chromosomes, Volume 1, Springer-Verlag, New York.",
+        "karyotype": "Hsu T.C., Benirschke K. (1967) An Atlas of Mammalian Chromosomes, Volume 1, Springer-Verlag, New York.",
+        "genotypic": "Hsu T.C., Benirschke K. (1967) An Atlas of Mammalian Chromosomes, Volume 1, Springer-Verlag, New York."
+      },
+      "notes": ""
+    },
+    {
+      "scientific_name": "Panthera pardus",
+      "record_id": "vertebrate:1164",
+      "fields": {
+        "sexual_system": "gonochorous",
+        "karyotype": "XY",
+        "genotypic": "male heterogametic"
+      },
+      "citations": {
+        "sexual_system": "Hsu T.C., Benirschke K. (1968) An Atlas of Mammalian Chromosomes, Volume 2, Springer-Verlag, New York.",
+        "karyotype": "Hsu T.C., Benirschke K. (1968) An Atlas of Mammalian Chromosomes, Volume 2, Springer-Verlag, New York.",
+        "genotypic": "Hsu T.C., Benirschke K. (1968) An Atlas of Mammalian Chromosomes, Volume 2, Springer-Verlag, New York."
+      },
+      "notes": ""
+    },
+    {
+      "scientific_name": "Panthera tigris",
+      "record_id": "vertebrate:1165",
+      "fields": {
+        "sexual_system": "gonochorous",
+        "karyotype": "XY",
+        "genotypic": "male heterogametic"
+      },
+      "citations": {
+        "sexual_system": "Hsu T.C., Benirschke K. (1968) An Atlas of Mammalian Chromosomes, Volume 2, Springer-Verlag, New York.",
+        "karyotype": "Hsu T.C., Benirschke K. (1968) An Atlas of Mammalian Chromosomes, Volume 2, Springer-Verlag, New York.",
+        "genotypic": "Hsu T.C., Benirschke K. (1968) An Atlas of Mammalian Chromosomes, Volume 2, Springer-Verlag, New York."
+      },
+      "notes": ""
+    },
+    {
+      "scientific_name": "Pica pica",
+      "record_id": "vertebrate:279",
+      "fields": {
+        "sexual_system": "gonochorous",
+        "karyotype": "ZW",
+        "genotypic": "female heterogametic"
+      },
+      "citations": {
+        "sexual_system": "Rutkowska J. et al. (2012) Biology Letters 8: 636-638",
+        "karyotype": "Rutkowska J. et al. (2012) Biology Letters 8: 636-638",
+        "genotypic": "Rutkowska J. et al. (2012) Biology Letters 8: 636-638"
+      },
+      "notes": ""
+    },
+    {
+      "scientific_name": "Podarcis muralis",
+      "record_id": "vertebrate:2044",
+      "fields": {
+        "sexual_system": "gonochorous",
+        "genotypic": "GSD"
+      },
+      "citations": {
+        "sexual_system": "Viets B.E., Ewert M.A., Talent L.G., Nelson C.E. (1994) Sex-determining mechanisms in squamate reptiles. The Journal of Experimental Zoology 270: 45-56.",
+        "genotypic": "Viets B.E., Ewert M.A., Talent L.G., Nelson C.E. (1994) Sex-determining mechanisms in squamate reptiles. The Journal of Experimental Zoology 270: 45-56."
+      },
+      "notes": ""
+    },
+    {
+      "scientific_name": "Pogona vitticeps",
+      "record_id": "vertebrate:1689",
+      "fields": {
+        "sexual_system": "gonochorous",
+        "karyotype": "ZW",
+        "genotypic": "female heterogametic"
+      },
+      "citations": {
+        "sexual_system": "Harlow PS (2004) Temperature-Dependent Sex Determination in Lizards. In: Temperature Dependent Sex Determination in Vertebrates (eds. Valenzuela N, Lance VA), pp. 42-52. Smithsonian Books, Washington, DC.",
+        "karyotype": "Harlow PS (2004) Temperature-Dependent Sex Determination in Lizards. In: Temperature Dependent Sex Determination in Vertebrates (eds. Valenzuela N, Lance VA), pp. 42-52. Smithsonian Books, Washington, DC.",
+        "genotypic": "Harlow PS (2004) Temperature-Dependent Sex Determination in Lizards. In: Temperature Dependent Sex Determination in Vertebrates (eds. Valenzuela N, Lance VA), pp. 42-52. Smithsonian Books, Washington, DC."
+      },
+      "notes": ""
+    },
+    {
+      "scientific_name": "Rangifer tarandus",
+      "record_id": "vertebrate:1130",
+      "fields": {
+        "sexual_system": "gonochorous",
+        "karyotype": "XY",
+        "genotypic": "male heterogametic"
+      },
+      "citations": {
+        "sexual_system": "Hsu T.C., Benirschke K. (1969) An Atlas of Mammalian Chromosomes, Volume 3, Springer-Verlag, New York.",
+        "karyotype": "Hsu T.C., Benirschke K. (1969) An Atlas of Mammalian Chromosomes, Volume 3, Springer-Verlag, New York.",
+        "genotypic": "Hsu T.C., Benirschke K. (1969) An Atlas of Mammalian Chromosomes, Volume 3, Springer-Verlag, New York."
+      },
+      "notes": ""
+    },
+    {
+      "scientific_name": "Rattus norvegicus",
+      "record_id": "vertebrate:1503",
+      "fields": {
+        "sexual_system": "gonochorous",
+        "karyotype": "XY",
+        "genotypic": "male heterogametic"
+      },
+      "citations": {
+        "sexual_system": "Hsu T.C., Benirschke K. (1967) An Atlas of Mammalian Chromosomes, Volume 1, Springer-Verlag, New York.",
+        "karyotype": "Hsu T.C., Benirschke K. (1967) An Atlas of Mammalian Chromosomes, Volume 1, Springer-Verlag, New York.",
+        "genotypic": "Hsu T.C., Benirschke K. (1967) An Atlas of Mammalian Chromosomes, Volume 1, Springer-Verlag, New York."
+      },
+      "notes": ""
+    },
+    {
+      "scientific_name": "Saimiri sciureus",
+      "record_id": "vertebrate:1333",
+      "fields": {
+        "sexual_system": "gonochorous",
+        "karyotype": "XY",
+        "genotypic": "male heterogametic"
+      },
+      "citations": {
+        "sexual_system": "Hsu T.C., Benirschke K. (1973) An Atlas of Mammalian Chromosomes, Volume 7, Springer-Verlag, New York.",
+        "karyotype": "Hsu T.C., Benirschke K. (1973) An Atlas of Mammalian Chromosomes, Volume 7, Springer-Verlag, New York.",
+        "genotypic": "Hsu T.C., Benirschke K. (1973) An Atlas of Mammalian Chromosomes, Volume 7, Springer-Verlag, New York."
+      },
+      "notes": ""
+    },
+    {
+      "scientific_name": "Serinus canaria",
+      "record_id": "vertebrate:310",
+      "fields": {
+        "sexual_system": "gonochorous",
+        "karyotype": "ZW",
+        "genotypic": "female heterogametic"
+      },
+      "citations": {
+        "sexual_system": "Rutkowska J. et al. (2012) Biology Letters 8: 636-638",
+        "karyotype": "Rutkowska J. et al. (2012) Biology Letters 8: 636-638",
+        "genotypic": "Rutkowska J. et al. (2012) Biology Letters 8: 636-638"
+      },
+      "notes": ""
+    },
+    {
+      "scientific_name": "Sparus aurata",
+      "record_id": "vertebrate:963",
+      "fields": {
+        "sexual_system": "hermaphrodite"
+      },
+      "citations": {
+        "sexual_system": "Devlin and Nagahama (2002) Aquaculture 208: 191-364"
+      },
+      "notes": "protandrous hermaphrodite"
+    },
+    {
+      "scientific_name": "Strix aluco",
+      "record_id": "vertebrate:364",
+      "fields": {
+        "sexual_system": "gonochorous",
+        "karyotype": "ZW",
+        "genotypic": "female heterogametic"
+      },
+      "citations": {
+        "sexual_system": "Rutkowska J. et al. (2012) Biology Letters 8: 636-638",
+        "karyotype": "Rutkowska J. et al. (2012) Biology Letters 8: 636-638",
+        "genotypic": "Rutkowska J. et al. (2012) Biology Letters 8: 636-638"
+      },
+      "notes": ""
+    },
+    {
+      "scientific_name": "Suricata suricatta",
+      "record_id": "vertebrate:1201",
+      "fields": {
+        "sexual_system": "gonochorous",
+        "karyotype": "XY",
+        "genotypic": "male heterogametic"
+      },
+      "citations": {
+        "sexual_system": "Hsu T.C., Benirschke K. (1970) An Atlas of Mammalian Chromosomes, Volume 4, Springer-Verlag, New York.",
+        "karyotype": "Hsu T.C., Benirschke K. (1970) An Atlas of Mammalian Chromosomes, Volume 4, Springer-Verlag, New York.",
+        "genotypic": "Hsu T.C., Benirschke K. (1970) An Atlas of Mammalian Chromosomes, Volume 4, Springer-Verlag, New York."
+      },
+      "notes": ""
+    },
+    {
+      "scientific_name": "Taeniopygia guttata",
+      "record_id": "vertebrate:308",
+      "fields": {
+        "sexual_system": "gonochorous",
+        "karyotype": "ZW",
+        "genotypic": "female heterogametic"
+      },
+      "citations": {
+        "sexual_system": "Rutkowska J. et al. (2012) Biology Letters 8: 636-638",
+        "karyotype": "Rutkowska J. et al. (2012) Biology Letters 8: 636-638",
+        "genotypic": "Rutkowska J. et al. (2012) Biology Letters 8: 636-638"
+      },
+      "notes": "was Poephila"
+    },
+    {
+      "scientific_name": "Tursiops truncatus",
+      "record_id": "vertebrate:1208",
+      "fields": {
+        "sexual_system": "gonochorous",
+        "karyotype": "XY",
+        "genotypic": "male heterogametic"
+      },
+      "citations": {
+        "sexual_system": "Hsu T.C., Benirschke K. (1973) An Atlas of Mammalian Chromosomes, Volume 7, Springer-Verlag, New York.",
+        "karyotype": "Hsu T.C., Benirschke K. (1973) An Atlas of Mammalian Chromosomes, Volume 7, Springer-Verlag, New York.",
+        "genotypic": "Hsu T.C., Benirschke K. (1973) An Atlas of Mammalian Chromosomes, Volume 7, Springer-Verlag, New York."
+      },
+      "notes": ""
+    },
+    {
+      "scientific_name": "Ursus americanus",
+      "record_id": "vertebrate:1192",
+      "fields": {
+        "sexual_system": "gonochorous",
+        "karyotype": "XY",
+        "genotypic": "male heterogametic"
+      },
+      "citations": {
+        "sexual_system": "Hsu T.C., Benirschke K. (1969) An Atlas of Mammalian Chromosomes, Volume 3, Springer-Verlag, New York.",
+        "karyotype": "Hsu T.C., Benirschke K. (1969) An Atlas of Mammalian Chromosomes, Volume 3, Springer-Verlag, New York.",
+        "genotypic": "Hsu T.C., Benirschke K. (1969) An Atlas of Mammalian Chromosomes, Volume 3, Springer-Verlag, New York."
+      },
+      "notes": ""
+    },
+    {
+      "scientific_name": "Vanellus vanellus",
+      "record_id": "vertebrate:219",
+      "fields": {
+        "sexual_system": "gonochorous",
+        "karyotype": "ZW",
+        "genotypic": "female heterogametic"
+      },
+      "citations": {
+        "sexual_system": "Rutkowska J. et al. (2012) Biology Letters 8: 636-638",
+        "karyotype": "Rutkowska J. et al. (2012) Biology Letters 8: 636-638",
+        "genotypic": "Rutkowska J. et al. (2012) Biology Letters 8: 636-638"
+      },
+      "notes": ""
+    },
+    {
+      "scientific_name": "Varanus salvator",
+      "record_id": "vertebrate:2105",
+      "fields": {
+        "sexual_system": "gonochorous",
+        "environmental": "TSD"
+      },
+      "citations": {
+        "sexual_system": "Harlow PS (2004) Temperature-Dependent Sex Determination in Lizards. In: Temperature Dependent Sex Determination in Vertebrates (eds. Valenzuela N, Lance VA), pp. 42-52. Smithsonian Books, Washington, DC.",
+        "environmental": "Harlow PS (2004) Temperature-Dependent Sex Determination in Lizards. In: Temperature Dependent Sex Determination in Vertebrates (eds. Valenzuela N, Lance VA), pp. 42-52. Smithsonian Books, Washington, DC."
+      },
+      "notes": "Equivocal classification. Tentative results due to extremely small sample sizes and/or insufficient temperature treatments."
+    },
+    {
+      "scientific_name": "Xenopus laevis",
+      "record_id": "vertebrate:87",
+      "fields": {
+        "sexual_system": "gonochorous",
+        "karyotype": "homomorphic",
+        "genotypic": "female heterogametic"
+      },
+      "citations": {
+        "sexual_system": "Schmid M., Steinlein C. (1991) Chromosoma 101: 123-132.",
+        "karyotype": "Schmid M., Steinlein C. (1991) Chromosoma 101: 123-132.",
+        "genotypic": "Zaborski P. (1979) CRAS D 289: 1153-1156."
+      },
+      "notes": "chromosome 3, DM-W"
+    }
+  ]
+}

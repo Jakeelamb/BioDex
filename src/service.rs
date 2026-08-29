@@ -10,12 +10,13 @@ use crate::api::{
     ApiError,
 };
 use crate::cache::Cache;
-use crate::curated_animals::apply_curated_animal_supplement;
 use crate::db_worker::DbWorker;
 use crate::local_db::{CachedMedia, CachedSpecies, TaxonName};
+use crate::local_supplements::apply_local_supplements;
 use crate::species::{
-    BoundingBox, CountryOccurrence, Distribution, ExternalIds, GenomeStats, ImageInfo, LifeHistory,
-    LineageEntry, Taxonomy, UnifiedSpecies, CURRENT_LIFE_HISTORY_VERSION,
+    BoundingBox, CountryOccurrence, Distribution, EvidenceMethod, ExternalIds, GenomeStats,
+    ImageInfo, LifeHistory, LineageEntry, Taxonomy, TraitScope, TraitSource, UnifiedSpecies,
+    CURRENT_LIFE_HISTORY_VERSION,
 };
 
 /// Service for aggregating species data from multiple sources
@@ -30,69 +31,102 @@ pub struct SpeciesService {
     cache: Cache,
 }
 
+/// Controls whether a lookup may use local data, live sources, or both.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LookupPolicy {
+    /// Resolve only from BioDex's local databases.
+    OfflineOnly,
+    /// Return local data when available, otherwise fetch and cache live data.
+    PreferCache,
+    /// Fetch live data even when a local copy exists, preserving missing fields.
+    Refresh,
+}
+
+impl LookupPolicy {
+    fn reads_local_first(self) -> bool {
+        self != Self::Refresh
+    }
+
+    fn permits_live_fetch(self) -> bool {
+        self != Self::OfflineOnly
+    }
+
+    fn bypasses_file_cache(self) -> bool {
+        self == Self::Refresh
+    }
+}
+
 impl SpeciesService {
     /// Create a new species service with default cache settings (24 hour TTL)
     pub fn new() -> Result<Self, std::io::Error> {
-        Ok(Self {
+        Ok(Self::from_parts(
+            DbWorker::new()?,
+            Cache::default_location(24)?,
+        ))
+    }
+
+    fn from_parts(db: DbWorker, cache: Cache) -> Self {
+        Self {
             ncbi: NcbiClient::new(),
             inat: InatClient::new(),
             gbif: GbifClient::new(),
             wikipedia: WikipediaClient::new(),
             ollama: OllamaClient::new(),
             ensembl: EnsemblClient::new(),
-            db: DbWorker::new()?,
-            cache: Cache::default_location(24)?,
-        })
+            db,
+            cache,
+        }
     }
 
     /// Create a species service with a custom cache
     pub fn with_cache(cache: Cache) -> Result<Self, std::io::Error> {
-        Ok(Self {
-            ncbi: NcbiClient::new(),
-            inat: InatClient::new(),
-            gbif: GbifClient::new(),
-            wikipedia: WikipediaClient::new(),
-            ollama: OllamaClient::new(),
-            ensembl: EnsemblClient::new(),
-            db: DbWorker::new()?,
-            cache,
-        })
+        Ok(Self::from_parts(DbWorker::new()?, cache))
     }
 
-    /// Look up a species by name, checking local cache first
-    pub async fn lookup(&self, name: &str) -> Result<UnifiedSpecies, ApiError> {
-        self.lookup_with_options(name, false).await
-    }
-
-    /// Look up a species with option to force refresh
-    pub async fn lookup_with_options(
+    /// Look up a species according to an explicit local/live data policy.
+    pub async fn lookup(
         &self,
         name: &str,
-        force_refresh: bool,
+        policy: LookupPolicy,
     ) -> Result<UnifiedSpecies, ApiError> {
+        self.lookup_with_fetch(name, policy, |bypass_file_cache| {
+            self.fetch_from_apis(name, bypass_file_cache)
+        })
+        .await
+    }
+
+    async fn lookup_with_fetch<F, Fut>(
+        &self,
+        name: &str,
+        policy: LookupPolicy,
+        fetch: F,
+    ) -> Result<UnifiedSpecies, ApiError>
+    where
+        F: FnOnce(bool) -> Fut,
+        Fut: std::future::Future<Output = Result<UnifiedSpecies, ApiError>>,
+    {
         let lookup_span = crate::perf::start_span();
         let name_owned = name.to_string();
 
-        // Check local SQLite database first (unless forcing refresh)
-        if !force_refresh {
-            let cached = self.db.get_species(name_owned).await;
+        if policy.reads_local_first() {
+            let cached = self.db.get_species(name_owned.clone()).await;
 
             if let Some(mut cached) = cached {
-                apply_curated_animal_supplement(&mut cached.species);
-                cached.species.taxonomy.lineage = cached
+                apply_local_supplements(&mut cached.species);
+                cached
                     .species
                     .taxonomy
-                    .build_display_lineage(&cached.species.scientific_name, &cached.species.rank);
+                    .ensure_display_lineage(&cached.species.scientific_name, &cached.species.rank);
                 crate::perf::log_value("lookup.cache_hit", &cached.species.scientific_name);
                 crate::perf::log_elapsed("lookup.total", lookup_span);
                 return Ok(cached.species);
             }
 
             if let Some(mut rich_species) = self.db.get_rich_species(name.to_string()).await {
-                apply_curated_animal_supplement(&mut rich_species);
-                rich_species.taxonomy.lineage = rich_species
+                apply_local_supplements(&mut rich_species);
+                rich_species
                     .taxonomy
-                    .build_display_lineage(&rich_species.scientific_name, &rich_species.rank);
+                    .ensure_display_lineage(&rich_species.scientific_name, &rich_species.rank);
                 self.db.cache_species_detached(rich_species.clone());
                 crate::perf::log_value("lookup.rich_cache_hit", &rich_species.scientific_name);
                 crate::perf::log_elapsed("lookup.total", lookup_span);
@@ -101,7 +135,7 @@ impl SpeciesService {
 
             if let Some(taxon) = self.db.get_taxon_by_name(name.to_string()).await {
                 let mut species = build_local_species_profile(&taxon);
-                apply_curated_animal_supplement(&mut species);
+                apply_local_supplements(&mut species);
                 self.db.cache_species_detached(species.clone());
                 self.db.cache_rich_species_detached(species.clone());
                 crate::perf::log_value("lookup.local_taxonomy_hit", &species.scientific_name);
@@ -109,11 +143,13 @@ impl SpeciesService {
                 return Ok(species);
             }
 
-            crate::perf::log_elapsed("lookup.total", lookup_span);
-            return Err(ApiError::NotFound(name.to_string()));
+            if !policy.permits_live_fetch() {
+                crate::perf::log_elapsed("lookup.total", lookup_span);
+                return Err(ApiError::NotFound(name.to_string()));
+            }
         }
 
-        let previous_species = if force_refresh {
+        let previous_species = if policy == LookupPolicy::Refresh {
             let previous_species = self
                 .db
                 .get_species(name_owned.clone())
@@ -123,24 +159,22 @@ impl SpeciesService {
                 Some(species) => Some(species),
                 None => self.db.get_rich_species(name.to_string()).await,
             };
-            // Invalidate cache entry if forcing refresh
-            self.db.invalidate_species(name.to_string()).await;
             previous_species
         } else {
             None
         };
 
-        // Fetch from APIs
-        let mut species = self.fetch_from_apis(name, force_refresh).await?;
+        let mut species = fetch(policy.bypasses_file_cache()).await?;
+        validate_live_identity(name, &species)?;
         if let Some(previous) = previous_species.as_ref() {
             merge_species_missing_fields(&mut species, previous);
         }
-        apply_curated_animal_supplement(&mut species);
-        species.taxonomy.lineage = species
+        apply_local_supplements(&mut species);
+        species
             .taxonomy
-            .build_display_lineage(&species.scientific_name, &species.rank);
+            .ensure_display_lineage(&species.scientific_name, &species.rank);
 
-        // Cache in local database
+        let _ = self.cache.set(&species_cache_key(name), &species);
         self.db.cache_species_detached(species.clone());
         self.db.cache_rich_species_detached(species.clone());
         crate::perf::log_elapsed("lookup.total", lookup_span);
@@ -154,11 +188,11 @@ impl SpeciesService {
             .get_species(name.to_string())
             .await
             .map(|mut cached| {
-                apply_curated_animal_supplement(&mut cached.species);
-                cached.species.taxonomy.lineage = cached
+                apply_local_supplements(&mut cached.species);
+                cached
                     .species
                     .taxonomy
-                    .build_display_lineage(&cached.species.scientific_name, &cached.species.rank);
+                    .ensure_display_lineage(&cached.species.scientific_name, &cached.species.rank);
                 cached
             })
     }
@@ -168,10 +202,10 @@ impl SpeciesService {
             .get_rich_species(name.to_string())
             .await
             .map(|mut species| {
-                apply_curated_animal_supplement(&mut species);
-                species.taxonomy.lineage = species
+                apply_local_supplements(&mut species);
+                species
                     .taxonomy
-                    .build_display_lineage(&species.scientific_name, &species.rank);
+                    .ensure_display_lineage(&species.scientific_name, &species.rank);
                 species
             })
     }
@@ -359,7 +393,7 @@ impl SpeciesService {
     ) -> Result<UnifiedSpecies, ApiError> {
         let fetch_span = crate::perf::start_span();
         // Check file cache first
-        let cache_key = format!("species_{}", name.to_lowercase().replace(' ', "_"));
+        let cache_key = species_cache_key(name);
         let mut stale_file_cache = None;
         if !bypass_file_cache {
             if let Some(mut cached) = self.cache.get::<UnifiedSpecies>(&cache_key) {
@@ -604,13 +638,26 @@ impl SpeciesService {
                 }
             }
 
+            let wikidata_id = wikidata.id.clone();
             ids.wikidata_id = Some(wikidata.id);
             iucn_status = wikidata.iucn_status;
             life_history.lifespan_years = wikidata.life_expectancy_years;
             life_history.length_meters = wikidata.length_meters;
             life_history.height_meters = wikidata.height_meters;
             life_history.mass_kilograms = wikidata.mass_kilograms;
-            life_history.reproduction_modes = wikidata.reproduction_modes;
+            life_history.reproductive_traits.add_classified_labels(
+                &wikidata.reproduction_modes,
+                TraitSource {
+                    dataset: "Wikidata".to_string(),
+                    record_id: Some(wikidata_id.clone()),
+                    url: Some(format!("https://www.wikidata.org/wiki/{wikidata_id}")),
+                    citation: None,
+                    version: None,
+                    retrieved_at_unix: None,
+                },
+                EvidenceMethod::StructuredDataset,
+                TraitScope::for_taxon(&scientific_name),
+            );
 
             if description.is_none() {
                 description = wikidata.description;
@@ -638,7 +685,10 @@ impl SpeciesService {
         if life_history.lifespan_years.is_none()
             || (life_history.length_meters.is_none() && life_history.height_meters.is_none())
             || life_history.mass_kilograms.is_none()
-            || life_history.reproduction_modes.is_empty()
+            || life_history
+                .reproductive_traits
+                .reproduction_summary()
+                .is_none()
         {
             if let Some(fallback) = self.get_cached_wiki_life_history(&scientific_name).await {
                 if life_history.lifespan_years.is_none() {
@@ -653,8 +703,24 @@ impl SpeciesService {
                 if life_history.mass_kilograms.is_none() {
                     life_history.mass_kilograms = fallback.mass_kilograms;
                 }
-                if life_history.reproduction_modes.is_empty() {
-                    life_history.reproduction_modes = fallback.reproduction_modes;
+                if life_history
+                    .reproductive_traits
+                    .reproduction_summary()
+                    .is_none()
+                {
+                    life_history.reproductive_traits.add_classified_labels(
+                        &fallback.reproduction_modes,
+                        TraitSource {
+                            dataset: "Wikipedia".to_string(),
+                            record_id: None,
+                            url: wikipedia_url.clone(),
+                            citation: None,
+                            version: None,
+                            retrieved_at_unix: None,
+                        },
+                        EvidenceMethod::TextCandidate,
+                        TraitScope::for_taxon(&scientific_name),
+                    );
                 }
             }
         }
@@ -706,12 +772,53 @@ impl SpeciesService {
             images,
         };
 
-        // Cache the result in file cache
-        let _ = self.cache.set(&cache_key, &unified);
         crate::perf::log_elapsed("fetch.total", fetch_span);
 
         Ok(unified)
     }
+}
+
+fn species_cache_key(name: &str) -> String {
+    format!("species_{}", name.to_lowercase().replace(' ', "_"))
+}
+
+fn validate_live_identity(requested: &str, species: &UnifiedSpecies) -> Result<(), ApiError> {
+    let requested_display = requested.trim();
+    let requested = normalize_identity(requested_display);
+    let scientific_name = normalize_identity(&species.scientific_name);
+    let canonical_requested = strip_parenthesized_authority(&requested);
+    let canonical_scientific_name = strip_parenthesized_authority(&scientific_name);
+
+    let scientific_name_matches =
+        requested == scientific_name || canonical_requested == canonical_scientific_name;
+    let common_name_matches = species
+        .common_names
+        .iter()
+        .any(|name| normalize_identity(name) == requested);
+
+    if scientific_name_matches || common_name_matches {
+        Ok(())
+    } else {
+        Err(ApiError::IdentityMismatch {
+            requested: requested_display.to_string(),
+            resolved: species.scientific_name.clone(),
+        })
+    }
+}
+
+fn normalize_identity(value: &str) -> String {
+    value
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_lowercase()
+}
+
+fn strip_parenthesized_authority(value: &str) -> &str {
+    value
+        .split_once(" (")
+        .filter(|(name, authority)| name.contains(' ') && authority.ends_with(')'))
+        .map_or(value, |(name, _)| name)
 }
 
 fn merge_species_missing_fields(species: &mut UnifiedSpecies, previous: &UnifiedSpecies) {
@@ -785,9 +892,10 @@ fn merge_species_missing_fields(species: &mut UnifiedSpecies, previous: &Unified
     if species.life_history.mass_kilograms.is_none() {
         species.life_history.mass_kilograms = previous.life_history.mass_kilograms;
     }
-    if species.life_history.reproduction_modes.is_empty() {
-        species.life_history.reproduction_modes = previous.life_history.reproduction_modes.clone();
-    }
+    species
+        .life_history
+        .reproductive_traits
+        .merge_missing_from(&previous.life_history.reproductive_traits);
 
     if species.description.is_none() {
         species.description = previous.description.clone();
@@ -930,5 +1038,182 @@ pub fn build_local_species_profile(taxon: &TaxonName) -> UnifiedSpecies {
 impl Default for SpeciesService {
     fn default() -> Self {
         Self::new().expect("Failed to create SpeciesService with default cache")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::local_db::LocalDatabase;
+    use std::fs;
+    use std::path::PathBuf;
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+
+    struct TempCacheDir(PathBuf);
+
+    impl TempCacheDir {
+        fn new(label: &str) -> Self {
+            let path = std::env::temp_dir().join(format!(
+                "biodex_service_{label}_{}_{}",
+                std::process::id(),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .expect("system clock should be after the Unix epoch")
+                    .as_nanos()
+            ));
+            Self(path)
+        }
+    }
+
+    impl Drop for TempCacheDir {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn test_service(
+        label: &str,
+        cached: Option<&UnifiedSpecies>,
+    ) -> (SpeciesService, TempCacheDir) {
+        let db = LocalDatabase::open_in_memory().expect("in-memory database should open");
+        if let Some(species) = cached {
+            db.cache_species(species)
+                .expect("test species should enter the hot cache");
+            db.cache_rich_species(species)
+                .expect("test species should enter the rich cache");
+        }
+        let worker = DbWorker::from_database(db).expect("database worker should start");
+        let cache_dir = TempCacheDir::new(label);
+        let cache = Cache::new(cache_dir.0.clone(), 24);
+        (SpeciesService::from_parts(worker, cache), cache_dir)
+    }
+
+    fn test_species(scientific_name: &str) -> UnifiedSpecies {
+        UnifiedSpecies {
+            scientific_name: scientific_name.to_string(),
+            common_names: Vec::new(),
+            rank: "SPECIES".to_string(),
+            taxonomy: Taxonomy::default(),
+            ids: ExternalIds::default(),
+            genome: GenomeStats::default(),
+            life_history: LifeHistory {
+                extraction_version: CURRENT_LIFE_HISTORY_VERSION,
+                ..LifeHistory::default()
+            },
+            description: None,
+            wikipedia_extract: None,
+            wikipedia_url: None,
+            conservation_status: None,
+            iucn_status: None,
+            observations_count: None,
+            gbif_occurrences: None,
+            top_countries: Vec::new(),
+            distribution: Distribution::default(),
+            images: Vec::new(),
+        }
+    }
+
+    #[tokio::test]
+    async fn prefer_cache_does_not_poll_live_fetch_on_a_hot_hit() {
+        let cached = test_species("Testus cached");
+        let (service, _cache_dir) = test_service("hot", Some(&cached));
+        let calls = AtomicUsize::new(0);
+
+        let result = service
+            .lookup_with_fetch("Testus cached", LookupPolicy::PreferCache, |_| async {
+                calls.fetch_add(1, Ordering::SeqCst);
+                Err(ApiError::Api("live fetch should not run".to_string()))
+            })
+            .await
+            .expect("hot cache lookup should succeed");
+
+        assert_eq!(result.scientific_name, "Testus cached");
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn prefer_cache_fetches_and_persists_a_cold_lookup() {
+        let (service, _cache_dir) = test_service("cold", None);
+        let calls = AtomicUsize::new(0);
+
+        let result = service
+            .lookup_with_fetch("Testus online", LookupPolicy::PreferCache, |bypass| {
+                assert!(!bypass);
+                calls.fetch_add(1, Ordering::SeqCst);
+                std::future::ready(Ok(test_species("Testus online")))
+            })
+            .await
+            .expect("cold lookup should fetch live data");
+
+        service.flush_cache_writes().await;
+        assert_eq!(result.scientific_name, "Testus online");
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert!(service.get_rich_species("Testus online").await.is_some());
+    }
+
+    #[tokio::test]
+    async fn offline_only_never_polls_live_fetch() {
+        let (service, _cache_dir) = test_service("offline", None);
+        let calls = AtomicUsize::new(0);
+
+        let result = service
+            .lookup_with_fetch("Testus absent", LookupPolicy::OfflineOnly, |_| async {
+                calls.fetch_add(1, Ordering::SeqCst);
+                Ok(test_species("Testus absent"))
+            })
+            .await;
+
+        assert!(matches!(result, Err(ApiError::NotFound(_))));
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn refresh_bypasses_file_cache_and_preserves_missing_fields() {
+        let mut cached = test_species("Testus refreshed");
+        cached.description = Some("Preserved local detail".to_string());
+        let (service, _cache_dir) = test_service("refresh", Some(&cached));
+        let bypassed = AtomicBool::new(false);
+
+        let result = service
+            .lookup_with_fetch("Testus refreshed", LookupPolicy::Refresh, |bypass| {
+                bypassed.store(bypass, Ordering::SeqCst);
+                std::future::ready(Ok(test_species("Testus refreshed")))
+            })
+            .await
+            .expect("refresh should use the live result");
+
+        assert!(bypassed.load(Ordering::SeqCst));
+        assert_eq!(
+            result.description.as_deref(),
+            Some("Preserved local detail")
+        );
+    }
+
+    #[tokio::test]
+    async fn identity_mismatch_is_rejected_before_persistence() {
+        let (service, _cache_dir) = test_service("mismatch", None);
+
+        let result = service
+            .lookup_with_fetch("Testus requested", LookupPolicy::PreferCache, |_| async {
+                Ok(test_species("Otherus returned"))
+            })
+            .await;
+
+        assert!(matches!(result, Err(ApiError::IdentityMismatch { .. })));
+        service.flush_cache_writes().await;
+        assert!(service
+            .cache
+            .get::<UnifiedSpecies>(&species_cache_key("Testus requested"))
+            .is_none());
+        assert!(service.get_rich_species("Otherus returned").await.is_none());
+    }
+
+    #[test]
+    fn live_identity_accepts_common_names_and_parenthesized_authorities() {
+        let mut species = test_species("Panthera leo (Linnaeus, 1758)");
+        species.common_names.push("Lion".to_string());
+
+        assert!(validate_live_identity("Panthera leo", &species).is_ok());
+        assert!(validate_live_identity(" lion ", &species).is_ok());
     }
 }

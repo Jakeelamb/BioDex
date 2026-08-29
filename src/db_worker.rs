@@ -14,13 +14,25 @@ pub struct DbWorker {
 
 impl DbWorker {
     pub fn new() -> io::Result<Self> {
+        Self::spawn(|| LocalDatabase::open().map_err(io::Error::other))
+    }
+
+    #[cfg(test)]
+    pub(crate) fn from_database(db: LocalDatabase) -> io::Result<Self> {
+        Self::spawn(|| Ok(db))
+    }
+
+    fn spawn<F>(open: F) -> io::Result<Self>
+    where
+        F: FnOnce() -> io::Result<LocalDatabase> + Send + 'static,
+    {
         let (sender, receiver) = mpsc::channel::<Job>();
         let (ready_tx, ready_rx) = mpsc::channel::<Result<(), String>>();
 
         std::thread::Builder::new()
             .name("biodex-db".to_string())
             .spawn(move || {
-                let mut db = match LocalDatabase::open() {
+                let mut db = match open() {
                     Ok(db) => {
                         let _ = ready_tx.send(Ok(()));
                         db
@@ -130,12 +142,6 @@ impl DbWorker {
         self.enqueue(move |db| {
             let _ = db.cache_species(&species);
         });
-    }
-
-    pub async fn invalidate_species(&self, scientific_name: String) {
-        let _ = self
-            .request(move |db| db.invalidate_species(&scientific_name).ok())
-            .await;
     }
 
     pub async fn cache_species_image(&self, species: UnifiedSpecies, data: Vec<u8>) {

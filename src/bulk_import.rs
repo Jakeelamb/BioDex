@@ -140,10 +140,8 @@ fn import_names(
 
                 match name_class.as_str() {
                     "scientific name" => entry.scientific_name = name,
-                    "genbank common name" | "common name" => {
-                        if entry.common_name.is_none() {
-                            entry.common_name = Some(name);
-                        }
+                    "genbank common name" | "common name" if entry.common_name.is_none() => {
+                        entry.common_name = Some(name);
                     }
                     _ => {}
                 }

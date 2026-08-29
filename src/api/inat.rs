@@ -7,9 +7,7 @@ use serde::Deserialize;
 
 const BASE_URL: &str = "https://api.inaturalist.org/v1";
 
-pub struct InatClient {
-    client: reqwest::Client,
-}
+pub struct InatClient;
 
 #[derive(Debug, Clone)]
 pub struct Taxon {
@@ -67,12 +65,7 @@ struct AncestorResult {
 
 impl InatClient {
     pub fn new() -> Self {
-        Self {
-            client: reqwest::Client::builder()
-                .timeout(std::time::Duration::from_secs(15))
-                .build()
-                .unwrap_or_else(|_| reqwest::Client::new()),
-        }
+        Self
     }
 
     /// Search for taxa by name with rank filter (e.g., "species", "genus")
@@ -84,7 +77,7 @@ impl InatClient {
             rank
         );
 
-        let response: TaxaResponse = self.client.get(&url).send().await?.json().await?;
+        let response: TaxaResponse = super::http_client().get(&url).send().await?.json().await?;
 
         if response.results.is_empty() {
             return Err(ApiError::NotFound(query.to_string()));

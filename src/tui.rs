@@ -3,9 +3,9 @@
 //! Features real images, gauge-based stats, and adaptive layout.
 
 use crate::api::gbif::GbifClient;
-use crate::curated_animals::{canonical_curated_species_name, CURATED_ANIMAL_TARGET};
+use crate::curated_animals::CURATED_ANIMAL_TARGET;
 use crate::local_db::{CachedMedia, TaxonName};
-use crate::service::SpeciesService;
+use crate::service::{LookupPolicy, SpeciesService};
 use crate::species::{ImageInfo, UnifiedSpecies};
 use crossterm::{
     event::{Event, EventStream, KeyCode, KeyEventKind},
@@ -194,6 +194,12 @@ struct StatusBanner {
     message: String,
 }
 
+#[derive(Clone, Copy)]
+struct SearchAvailability {
+    has_offline_index: bool,
+    live_lookup_enabled: bool,
+}
+
 impl StatusBanner {
     fn new(tone: StatusTone, message: impl Into<String>) -> Self {
         Self {
@@ -297,6 +303,7 @@ pub struct TuiRuntime {
     pub update_rx: mpsc::Receiver<TuiUpdate>,
     pub service: Arc<SpeciesService>,
     pub gbif: Arc<GbifClient>,
+    pub lookup_policy: LookupPolicy,
 }
 
 struct RenderState<'a> {
@@ -314,7 +321,7 @@ struct RenderState<'a> {
     search_suggestions: Option<&'a [SearchSuggestion]>,
     search_selected: usize,
     is_favorite: bool,
-    has_offline_search: bool,
+    search_availability: SearchAvailability,
 }
 
 /// Data update message sent to TUI while running
@@ -423,6 +430,7 @@ pub async fn run_tui_loop(
         mut update_rx,
         service,
         gbif,
+        lookup_policy,
     } = runtime;
 
     // Mutable state that can be updated while running
@@ -437,6 +445,11 @@ pub async fn run_tui_loop(
     let mut search_suggestions: Option<Vec<SearchSuggestion>> = None;
     let mut is_favorite = initial.is_favorite;
     let has_offline_search = initial.has_offline_search;
+    let live_lookup_enabled = lookup_policy != LookupPolicy::OfflineOnly;
+    let search_availability = SearchAvailability {
+        has_offline_index: has_offline_search,
+        live_lookup_enabled,
+    };
     let mut status = StatusBanner::new(
         StatusTone::Info,
         format!(
@@ -509,7 +522,7 @@ pub async fn run_tui_loop(
                     search_suggestions: search_suggestions.as_deref(),
                     search_selected,
                     is_favorite,
-                    has_offline_search,
+                    search_availability,
                 };
                 render_frame(frame, layout[0], &mut render_state);
                 render_status_bar(
@@ -519,7 +532,7 @@ pub async fn run_tui_loop(
                     loading,
                     spinner_frame,
                     is_favorite,
-                    has_offline_search,
+                    search_availability,
                 );
             }
         })?;
@@ -547,17 +560,11 @@ pub async fn run_tui_loop(
                                 }
                                 KeyCode::Enter => {
                                     // Select highlighted suggestion or use raw query
-                                    let selected_suggestion = search_suggestions
-                                        .as_ref()
-                                        .and_then(|suggestions| suggestions.get(search_selected))
-                                        .cloned()
-                                        .or_else(|| {
-                                            canonical_curated_species_name(&search_query).map(|name| SearchSuggestion {
-                                                name: name.to_string(),
-                                                canonical_name: None,
-                                                rank: "SPECIES".to_string(),
-                                            })
-                                        });
+                                    let selected_suggestion = selected_search_target(
+                                        &search_query,
+                                        search_suggestions.as_deref(),
+                                        search_selected,
+                                    );
                                     let name_to_navigate = selected_suggestion
                                         .as_ref()
                                         .map(|s| s.name.clone());
@@ -583,7 +590,15 @@ pub async fn run_tui_loop(
                                             let svc = service.clone();
                                             let gb = gbif.clone();
                                             tokio::spawn(async move {
-                                                open_taxon_entry(tx, svc, gb, name, selected_rank).await;
+                                                open_taxon_entry(
+                                                    tx,
+                                                    svc,
+                                                    gb,
+                                                    name,
+                                                    selected_rank,
+                                                    lookup_policy,
+                                                )
+                                                .await;
                                             });
                                         } else if let Some(rank) = selected_rank {
                                             browser_history.clear();
@@ -663,6 +678,11 @@ pub async fn run_tui_loop(
                                     StatusBanner::new(
                                         StatusTone::Info,
                                         "Search the local taxonomy index, or type a full species name and press Enter.",
+                                    )
+                                } else if !live_lookup_enabled {
+                                    StatusBanner::new(
+                                        StatusTone::Info,
+                                        "Offline mode is on. Type the name of a locally cached profile.",
                                     )
                                 } else {
                                     StatusBanner::new(
@@ -793,7 +813,15 @@ pub async fn run_tui_loop(
                                                 let svc = service.clone();
                                                 let gb = gbif.clone();
                                                 tokio::spawn(async move {
-                                                    open_taxon_entry(tx, svc, gb, entry.name, Some(entry.rank)).await;
+                                                    open_taxon_entry(
+                                                        tx,
+                                                        svc,
+                                                        gb,
+                                                        entry.name,
+                                                        Some(entry.rank),
+                                                        lookup_policy,
+                                                    )
+                                                    .await;
                                                 });
                                             } else {
                                                 browser_history.push(BrowserPaneState {
@@ -842,7 +870,15 @@ pub async fn run_tui_loop(
                                             let svc = service.clone();
                                             let gb = gbif.clone();
                                             tokio::spawn(async move {
-                                                open_taxon_entry(tx, svc, gb, entry.name, Some(entry.rank)).await;
+                                                open_taxon_entry(
+                                                    tx,
+                                                    svc,
+                                                    gb,
+                                                    entry.name,
+                                                    Some(entry.rank),
+                                                    lookup_policy,
+                                                )
+                                                .await;
                                             });
                                         } else {
                                             status = StatusBanner::new(
@@ -978,7 +1014,15 @@ pub async fn run_tui_loop(
                     let svc = service.clone();
                     let gb = gbif.clone();
                     tokio::spawn(async move {
-                        open_taxon_entry(tx, svc, gb, name, Some("SPECIES".to_string())).await;
+                        open_taxon_entry(
+                            tx,
+                            svc,
+                            gb,
+                            name,
+                            Some("SPECIES".to_string()),
+                            lookup_policy,
+                        )
+                        .await;
                     });
                 }
             }
@@ -1141,6 +1185,11 @@ pub async fn run_tui_loop(
                                         StatusTone::Success,
                                         format!("{suggestion_count} indexed matches ready. Press Enter to open one."),
                                     )
+                                } else if !live_lookup_enabled {
+                                    StatusBanner::new(
+                                        StatusTone::Info,
+                                        format!("No local match for \"{}\". Offline mode will not query live sources.", search_query),
+                                    )
                                 } else if has_offline_search {
                                     StatusBanner::new(
                                         StatusTone::Warning,
@@ -1214,8 +1263,9 @@ async fn fetch_species_background(
     service: Arc<SpeciesService>,
     gbif: Arc<GbifClient>,
     name: String,
+    policy: LookupPolicy,
 ) {
-    fetch_species_internal(tx, service, gbif, name, false).await;
+    fetch_species_internal(tx, service, gbif, name, policy).await;
 }
 
 /// Background task to force refresh a species from APIs
@@ -1225,18 +1275,19 @@ async fn fetch_species_background_refresh(
     gbif: Arc<GbifClient>,
     name: String,
 ) {
-    fetch_species_internal(tx, service, gbif, name, true).await;
+    fetch_species_internal(tx, service, gbif, name, LookupPolicy::Refresh).await;
 }
 
-/// Internal species fetch with optional force refresh
+/// Internal species fetch using the caller's explicit cache/live policy.
 async fn fetch_species_internal(
     tx: mpsc::Sender<TuiUpdate>,
     service: Arc<SpeciesService>,
     gbif: Arc<GbifClient>,
     name: String,
-    force_refresh: bool,
+    policy: LookupPolicy,
 ) {
     let fetch_span = crate::perf::start_span();
+    let force_refresh = policy == LookupPolicy::Refresh;
     if !force_refresh {
         if let Some(cached) = service.get_cached_with_images(&name).await {
             let species = cached.species;
@@ -1264,7 +1315,7 @@ async fn fetch_species_internal(
         }
     }
 
-    match service.lookup_with_options(&name, force_refresh).await {
+    match service.lookup(&name, policy).await {
         Ok(new_species) => {
             let _ = tx
                 .send(TuiUpdate::SpeciesLoaded {
@@ -1763,8 +1814,27 @@ async fn open_taxon_entry(
     gbif: Arc<GbifClient>,
     name: String,
     _rank: Option<String>,
+    policy: LookupPolicy,
 ) {
-    fetch_species_background(tx, service, gbif, name).await;
+    fetch_species_background(tx, service, gbif, name, policy).await;
+}
+
+fn selected_search_target(
+    query: &str,
+    suggestions: Option<&[SearchSuggestion]>,
+    selected: usize,
+) -> Option<SearchSuggestion> {
+    suggestions
+        .and_then(|items| items.get(selected))
+        .cloned()
+        .or_else(|| {
+            let name = query.trim();
+            (!name.is_empty()).then(|| SearchSuggestion {
+                name: name.to_string(),
+                canonical_name: None,
+                rank: "SPECIES".to_string(),
+            })
+        })
 }
 
 fn alias_suggestions(query: &str) -> Vec<SearchSuggestion> {
@@ -1844,7 +1914,7 @@ fn render_frame(frame: &mut Frame, area: Rect, state: &mut RenderState<'_>) {
         rows[0],
         state.species,
         state.is_favorite,
-        state.has_offline_search,
+        state.search_availability,
     );
 
     if rows[1].width >= 100 {
@@ -1862,7 +1932,7 @@ fn render_frame(frame: &mut Frame, area: Rect, state: &mut RenderState<'_>) {
             state.search_query,
             state.search_suggestions,
             state.search_selected,
-            state.has_offline_search,
+            state.search_availability,
         );
     }
 }
@@ -1872,7 +1942,7 @@ fn render_top_banner(
     area: Rect,
     species: &UnifiedSpecies,
     is_favorite: bool,
-    has_offline_search: bool,
+    search_availability: SearchAvailability,
 ) {
     let block = Block::default()
         .borders(Borders::ALL)
@@ -1919,7 +1989,13 @@ fn render_top_banner(
 
     let mut right_spans = vec![
         badge(
-            if has_offline_search { "INDEX" } else { "LIVE" },
+            if !search_availability.live_lookup_enabled {
+                "OFFLINE"
+            } else if search_availability.has_offline_index {
+                "INDEX"
+            } else {
+                "LIVE"
+            },
             Color::Black,
             ACCENT_MINT,
         ),
@@ -1956,7 +2032,7 @@ fn render_status_bar(
     loading: bool,
     spinner_frame: usize,
     is_favorite: bool,
-    has_offline_search: bool,
+    search_availability: SearchAvailability,
 ) {
     let block = Block::default()
         .borders(Borders::TOP)
@@ -2007,7 +2083,9 @@ fn render_status_bar(
     } else {
         badge("UNSAVED", Color::Black, Color::Rgb(112, 118, 122))
     };
-    let search_badge = if has_offline_search {
+    let search_badge = if !search_availability.live_lookup_enabled {
+        badge("OFFLINE MODE", Color::Black, ACCENT_MINT)
+    } else if search_availability.has_offline_index {
         badge("INDEX READY", Color::Black, ACCENT_MINT)
     } else {
         badge("LIVE SEARCH", Color::Black, ACCENT_YELLOW)
@@ -2054,7 +2132,7 @@ fn render_search_overlay(
     query: &str,
     suggestions: Option<&[SearchSuggestion]>,
     selected: usize,
-    has_offline_search: bool,
+    search_availability: SearchAvailability,
 ) {
     let suggestion_count = suggestions.map(|s| s.len()).unwrap_or(0);
     let popup_width = 68.min(area.width.saturating_sub(4));
@@ -2092,8 +2170,10 @@ fn render_search_overlay(
     ]));
     frame.render_widget(input, chunks[0]);
 
-    let hint = if has_offline_search {
+    let hint = if search_availability.has_offline_index {
         "Type 2+ letters for indexed suggestions. Enter opens the highlighted or typed name."
+    } else if !search_availability.live_lookup_enabled {
+        "Offline mode is on. Enter opens the typed name only when it is cached locally."
     } else {
         "Offline taxonomy index is missing. Type a full name and press Enter to search live."
     };
@@ -2559,16 +2639,17 @@ fn preferred_range_panel_height(total_height: u16) -> u16 {
 
 fn render_stats_footer(frame: &mut Frame, area: Rect, species: &UnifiedSpecies) {
     let mut lines = vec![
+        Line::from(sex_determination_summary_spans(species)),
         Line::from(reproduction_summary_spans(species)),
-        Line::from(compact_genome_spans(species)),
+        Line::from(compact_assembly_spans(species)),
         Line::from(range_summary_spans(species)),
     ];
 
-    if area.height >= 4 {
+    if area.height >= 5 {
         lines.push(Line::from(source_badges(species)));
     }
 
-    if area.height >= 5 {
+    if area.height >= 6 {
         if let Some(notes) = field_notes_text(species) {
             lines.push(Line::from(Span::styled(
                 trim_for_line(&notes, area.width.saturating_mul(2) as usize),
@@ -3256,7 +3337,17 @@ fn source_badges(species: &UnifiedSpecies) -> Vec<Span<'static>> {
         if !spans.is_empty() {
             spans.push(Span::raw(" "));
         }
-        spans.push(badge("GENOME", Color::White, Color::Rgb(107, 91, 149)));
+        spans.push(badge("ASM", Color::White, Color::Rgb(107, 91, 149)));
+    }
+    if species
+        .life_history
+        .reproductive_traits
+        .has_source_dataset(crate::tree_of_sex::DATASET_NAME)
+    {
+        if !spans.is_empty() {
+            spans.push(Span::raw(" "));
+        }
+        spans.push(badge("TOS14", Color::Black, Color::Rgb(205, 192, 108)));
     }
 
     if spans.is_empty() {
@@ -3312,17 +3403,39 @@ fn primary_size_meters(species: &UnifiedSpecies) -> Option<f64> {
 }
 
 fn reproduction_summary_spans(species: &UnifiedSpecies) -> Vec<Span<'static>> {
-    let summary = if species.life_history.reproduction_modes.is_empty() {
-        "still being logged".to_string()
-    } else {
-        trim_for_line(&species.life_history.reproduction_modes.join(" · "), 36)
-    };
+    let summary = species
+        .life_history
+        .reproductive_traits
+        .reproduction_summary();
+    let is_unknown = summary.is_none();
+    let summary = trim_for_line(summary.as_deref().unwrap_or("unknown"), 42);
 
     vec![
         Span::styled("Repro ", Style::default().fg(Color::DarkGray)),
         Span::styled(
             summary,
-            if species.life_history.reproduction_modes.is_empty() {
+            if is_unknown {
+                Style::default().fg(Color::Rgb(224, 228, 231))
+            } else {
+                Style::default().fg(Color::White)
+            },
+        ),
+    ]
+}
+
+fn sex_determination_summary_spans(species: &UnifiedSpecies) -> Vec<Span<'static>> {
+    let summary = species
+        .life_history
+        .reproductive_traits
+        .sex_determination_summary();
+    let is_unknown = summary.is_none();
+    let summary = trim_for_line(summary.as_deref().unwrap_or("unknown"), 42);
+
+    vec![
+        Span::styled("Sex det ", Style::default().fg(Color::DarkGray)),
+        Span::styled(
+            summary,
+            if is_unknown {
                 Style::default().fg(Color::Rgb(224, 228, 231))
             } else {
                 Style::default().fg(Color::White)
@@ -3358,43 +3471,33 @@ fn compact_taxonomy_spans(
     ]
 }
 
-fn compact_genome_spans(species: &UnifiedSpecies) -> Vec<Span<'static>> {
+fn compact_assembly_spans(species: &UnifiedSpecies) -> Vec<Span<'static>> {
     let genome = &species.genome;
-    let genome_size = genome
-        .genome_size_bp
-        .map(|size| format!("{:.2} Gb", size as f64 / 1e9))
-        .unwrap_or_else(|| "unlogged".to_string());
     let chromosomes = genome
         .chromosome_count
         .map(|count| count.to_string())
         .unwrap_or_else(|| "unlogged".to_string());
-    let gc_or_mito = genome
-        .gc_percent
-        .map(|gc| format!("{gc:.1}%"))
-        .or_else(|| {
-            genome
-                .mito_genome_size_bp
-                .map(|mito| format!("{:.1} kb", mito as f64 / 1000.0))
-        })
+    let mitochondrial_length = genome
+        .mito_genome_size_bp
+        .map(|mito| format!("{:.1} kb", mito as f64 / 1000.0))
         .unwrap_or_else(|| "unlogged".to_string());
-    let tail_label = if genome.gc_percent.is_some() {
-        "GC"
-    } else {
-        "Mito"
-    };
+    let assembly_id = genome
+        .assembly_accession
+        .as_deref()
+        .or(genome.assembly_name.as_deref())
+        .or(genome.assembly_level.as_deref())
+        .unwrap_or("unlogged")
+        .to_string();
 
     vec![
-        Span::styled("Genome ", Style::default().fg(Color::DarkGray)),
-        Span::styled(genome_size, Style::default().fg(Color::Cyan)),
-        Span::raw(" │ "),
-        Span::styled("Chr ", Style::default().fg(Color::DarkGray)),
+        Span::styled("Assembly chr ", Style::default().fg(Color::DarkGray)),
         Span::styled(chromosomes, Style::default().fg(Color::Magenta)),
         Span::raw(" │ "),
-        Span::styled(
-            format!("{tail_label} "),
-            Style::default().fg(Color::DarkGray),
-        ),
-        Span::styled(gc_or_mito, Style::default().fg(Color::Green)),
+        Span::styled("MT ", Style::default().fg(Color::DarkGray)),
+        Span::styled(mitochondrial_length, Style::default().fg(Color::Green)),
+        Span::raw(" │ "),
+        Span::styled("Ref ", Style::default().fg(Color::DarkGray)),
+        Span::styled(assembly_id, Style::default().fg(Color::Cyan)),
     ]
 }
 
@@ -3599,4 +3702,109 @@ fn primary_catalog_id(species: &UnifiedSpecies) -> String {
         .or_else(|| species.ids.gbif_key.map(|key| format!("GBIF {key}")))
         .or_else(|| species.ids.inat_id.map(|id| format!("iNat {id}")))
         .unwrap_or_else(|| "LOCAL".to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        compact_assembly_spans, selected_search_target, sex_determination_summary_spans,
+        source_badges, SearchSuggestion,
+    };
+    use crate::species::{
+        Distribution, EvidenceMethod, ExternalIds, GenomeStats, Karyotype, LifeHistory, Taxonomy,
+        TraitEvidence, TraitScope, TraitSource, UnifiedSpecies,
+    };
+    use ratatui::text::Span;
+
+    fn test_species() -> UnifiedSpecies {
+        UnifiedSpecies {
+            scientific_name: "Anas platyrhynchos".to_string(),
+            common_names: vec!["Mallard".to_string()],
+            rank: "species".to_string(),
+            taxonomy: Taxonomy::default(),
+            ids: ExternalIds::default(),
+            genome: GenomeStats::default(),
+            life_history: LifeHistory::default(),
+            description: None,
+            wikipedia_extract: None,
+            wikipedia_url: None,
+            conservation_status: None,
+            iucn_status: None,
+            observations_count: None,
+            gbif_occurrences: None,
+            top_countries: Vec::new(),
+            distribution: Distribution::default(),
+            images: Vec::new(),
+        }
+    }
+
+    fn span_text(spans: Vec<Span<'static>>) -> String {
+        spans
+            .into_iter()
+            .map(|span| span.content.into_owned())
+            .collect()
+    }
+
+    #[test]
+    fn selected_suggestion_wins_over_the_typed_query() {
+        let suggestions = vec![SearchSuggestion {
+            name: "Panthera leo".to_string(),
+            canonical_name: Some("Lion".to_string()),
+            rank: "SPECIES".to_string(),
+        }];
+
+        let target = selected_search_target("lion", Some(&suggestions), 0)
+            .expect("selected suggestion should become the target");
+
+        assert_eq!(target.name, "Panthera leo");
+        assert_eq!(target.canonical_name.as_deref(), Some("Lion"));
+    }
+
+    #[test]
+    fn typed_name_is_a_target_without_indexed_suggestions() {
+        let target = selected_search_target("  Somniosus microcephalus  ", Some(&[]), 0)
+            .expect("trimmed raw query should become the target");
+
+        assert_eq!(target.name, "Somniosus microcephalus");
+        assert_eq!(target.rank, "SPECIES");
+    }
+
+    #[test]
+    fn blank_typed_name_has_no_target() {
+        assert!(selected_search_target("   ", None, 0).is_none());
+    }
+
+    #[test]
+    fn main_record_labels_genome_values_as_assembly_scoped() {
+        let mut species = test_species();
+        species.genome.chromosome_count = Some(41);
+        species.genome.mito_genome_size_bp = Some(15_600);
+        species.genome.assembly_accession = Some("GCF_TEST".to_string());
+
+        assert_eq!(
+            span_text(compact_assembly_spans(&species)),
+            "Assembly chr 41 │ MT 15.6 kb │ Ref GCF_TEST"
+        );
+    }
+
+    #[test]
+    fn main_record_surfaces_sourced_sex_determination() {
+        let mut species = test_species();
+        species
+            .life_history
+            .reproductive_traits
+            .karyotypes
+            .add_claim(TraitEvidence::new(
+                Karyotype::ZzZw,
+                TraitSource::new("Tree of Sex"),
+                EvidenceMethod::CuratedLiterature,
+                TraitScope::for_taxon("Anas platyrhynchos"),
+            ));
+
+        assert_eq!(
+            span_text(sex_determination_summary_spans(&species)),
+            "Sex det ZZ/ZW"
+        );
+        assert!(span_text(source_badges(&species)).contains("TOS14"));
+    }
 }

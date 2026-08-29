@@ -21,9 +21,7 @@ const P_HEIGHT: &str = "P2048";
 const P_MASS: &str = "P2067";
 const P_REPRODUCTION_MODE: &str = "P13318";
 
-pub struct WikipediaClient {
-    client: reqwest::Client,
-}
+pub struct WikipediaClient;
 
 #[derive(Debug, Clone)]
 pub struct WikiSummary {
@@ -245,12 +243,7 @@ struct QualifierSnak {
 
 impl WikipediaClient {
     pub fn new() -> Self {
-        Self {
-            client: reqwest::Client::builder()
-                .timeout(std::time::Duration::from_secs(15))
-                .build()
-                .unwrap_or_else(|_| reqwest::Client::new()),
-        }
+        Self
     }
 
     /// Get Wikipedia summary for a species by name
@@ -263,8 +256,7 @@ impl WikipediaClient {
             urlencoding::encode(&formatted_title)
         );
 
-        let response = self
-            .client
+        let response = super::http_client()
             .get(&url)
             .header("User-Agent", "biodex/0.1 (biodiversity TUI app)")
             .send()
@@ -333,8 +325,7 @@ impl WikipediaClient {
             urlencoding::encode(query)
         );
 
-        let response: WikidataSearchResponse = self
-            .client
+        let response: WikidataSearchResponse = super::http_client()
             .get(&url)
             .header("User-Agent", "biodex/0.1 (biodiversity TUI app)")
             .send()
@@ -356,8 +347,7 @@ impl WikipediaClient {
             WIKIDATA_API, entity_id
         );
 
-        let response: WikidataEntityResponse = self
-            .client
+        let response: WikidataEntityResponse = super::http_client()
             .get(&url)
             .header("User-Agent", "biodex/0.1 (biodiversity TUI app)")
             .send()
@@ -487,8 +477,7 @@ impl WikipediaClient {
             urlencoding::encode(title)
         );
 
-        let response: QueryExtractResponse = self
-            .client
+        let response: QueryExtractResponse = super::http_client()
             .get(&url)
             .header("User-Agent", "biodex/0.1 (biodiversity TUI app)")
             .send()
@@ -511,8 +500,7 @@ impl WikipediaClient {
             urlencoding::encode(title)
         );
 
-        let response: ParseWikitextResponse = self
-            .client
+        let response: ParseWikitextResponse = super::http_client()
             .get(&url)
             .header("User-Agent", "biodex/0.1 (biodiversity TUI app)")
             .send()
@@ -541,8 +529,7 @@ impl WikipediaClient {
             unique.into_iter().collect::<Vec<_>>().join("|")
         );
 
-        let response: WikidataEntityResponse = self
-            .client
+        let response: WikidataEntityResponse = super::http_client()
             .get(&url)
             .header("User-Agent", "biodex/0.1 (biodiversity TUI app)")
             .send()

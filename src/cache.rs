@@ -144,16 +144,33 @@ mod tests {
     use super::*;
     use std::env;
 
+    struct TestCacheDir(PathBuf);
+
+    impl TestCacheDir {
+        fn new() -> Self {
+            let path = env::temp_dir().join(format!(
+                "biodex-cache-test-{}-{:?}",
+                std::process::id(),
+                std::thread::current().id()
+            ));
+            let _ = fs::remove_dir_all(&path);
+            Self(path)
+        }
+    }
+
+    impl Drop for TestCacheDir {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
     #[test]
     fn test_cache_roundtrip() {
-        let temp_dir = env::temp_dir().join("biodex_test_cache");
-        let cache = Cache::new(temp_dir.clone(), 1);
+        let temp_dir = TestCacheDir::new();
+        let cache = Cache::new(temp_dir.0.clone(), 1);
 
         cache.set("test_key", &"test_value".to_string()).unwrap();
         let result: Option<String> = cache.get("test_key");
         assert_eq!(result, Some("test_value".to_string()));
-
-        // Cleanup
-        let _ = fs::remove_dir_all(temp_dir);
     }
 }

@@ -6,15 +6,17 @@ mod curated_animals;
 mod db_worker;
 mod demo;
 mod local_db;
+mod local_supplements;
 mod perf;
 mod service;
 mod species;
+mod tree_of_sex;
 mod tui;
 mod world_map;
 
 use api::gbif::GbifClient;
 use local_db::{CachedMedia, LocalDatabase};
-use service::{build_local_species_profile, SpeciesService};
+use service::{build_local_species_profile, LookupPolicy, SpeciesService};
 use species::{
     Distribution, ExternalIds, GenomeStats, LifeHistory, Taxonomy, UnifiedSpecies,
     CURRENT_LIFE_HISTORY_VERSION,
@@ -54,6 +56,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut audit_animals = false;
     let mut cache_all_rich = false;
     let mut force_refresh = false;
+    let mut offline = false;
     let mut species_parts = Vec::new();
 
     for arg in args.iter().skip(1) {
@@ -68,6 +71,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             "--audit-animals" => audit_animals = true,
             "--cache-all-rich" => cache_all_rich = true,
             "--force-refresh" | "--force" => force_refresh = true,
+            "--offline" => offline = true,
             "--help" | "-h" => {
                 print_help();
                 return Ok(());
@@ -75,6 +79,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             _ => species_parts.push(arg.as_str()),
         }
     }
+
+    let direct_lookup_policy = match direct_lookup_policy(offline, force_refresh) {
+        Ok(policy) => policy,
+        Err(message) => {
+            eprintln!("Error: {message}");
+            return Ok(());
+        }
+    };
 
     // Handle full import (backbone + NCBI taxonomy)
     if import_all {
@@ -118,9 +130,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let gbif = Arc::new(GbifClient::new());
 
     if text_mode {
-        run_text_mode(&service, &species_name).await
+        run_text_mode(&service, &species_name, direct_lookup_policy).await
     } else {
-        run_tui_mode(service, gbif, &species_name).await
+        run_tui_mode(service, gbif, &species_name, direct_lookup_policy).await
+    }
+}
+
+fn direct_lookup_policy(offline: bool, force_refresh: bool) -> Result<LookupPolicy, &'static str> {
+    match (offline, force_refresh) {
+        (true, true) => Err("--offline and --force-refresh cannot be used together"),
+        (true, false) => Ok(LookupPolicy::OfflineOnly),
+        (false, true) => Ok(LookupPolicy::Refresh),
+        (false, false) => Ok(LookupPolicy::PreferCache),
     }
 }
 
@@ -138,7 +159,8 @@ fn print_help() {
     println!("    --seed                  Alias for --prefetch");
     println!("    --prefetch-animals      Refresh curated Animalia candidates and cache media");
     println!("    --audit-animals         Audit curated Animalia completeness");
-    println!("    --force-refresh         Re-fetch all rows for a prefetch command");
+    println!("    --offline               Use only locally cached taxonomy and profiles");
+    println!("    --force-refresh         Bypass cached profiles and re-fetch live data");
     println!("    --cache-all-rich        Sweep all species into the durable rich cache");
     println!("    -s, --stats             Show local database statistics");
     println!("    -h, --help              Show this help message");
@@ -455,7 +477,14 @@ async fn refresh_hot_seed_entry(
     force_refresh: bool,
 ) -> HotSeedRefreshOutcome {
     match service
-        .lookup_with_options(&requested_name, force_refresh)
+        .lookup(
+            &requested_name,
+            if force_refresh {
+                LookupPolicy::Refresh
+            } else {
+                LookupPolicy::PreferCache
+            },
+        )
         .await
     {
         Ok(species) => {
@@ -629,7 +658,7 @@ async fn refresh_curated_animal(
     gbif: Arc<GbifClient>,
     requested_name: &'static str,
 ) -> AnimalRefreshOutcome {
-    match service.lookup_with_options(requested_name, true).await {
+    match service.lookup(requested_name, LookupPolicy::Refresh).await {
         Ok(species) => {
             let _ = tokio::join!(
                 download_species_image(&species, &service),
@@ -709,7 +738,7 @@ async fn cached_curated_species(
 }
 
 fn curated_animal_gaps(species: &UnifiedSpecies, media: &CachedMedia) -> Vec<&'static str> {
-    let mut gaps = Vec::new();
+    let mut gaps = Vec::with_capacity(13);
 
     if species.taxonomy.kingdom.as_deref() != Some("Animalia") {
         gaps.push("animalia");
@@ -769,7 +798,7 @@ fn life_history_complete(species: &UnifiedSpecies) -> bool {
     life.lifespan_years.is_some()
         && (life.length_meters.is_some() || life.height_meters.is_some())
         && life.mass_kilograms.is_some()
-        && !life.reproduction_modes.is_empty()
+        && life.reproductive_traits.has_reproduction_summary()
 }
 
 fn genome_size_complete(species: &UnifiedSpecies) -> bool {
@@ -908,7 +937,7 @@ async fn run_cache_all_rich() -> Result<(), Box<dyn std::error::Error>> {
             let svc = service.clone();
             async move {
                 let name = taxon.scientific_name.clone();
-                match svc.lookup(&name).await {
+                match svc.lookup(&name, LookupPolicy::OfflineOnly).await {
                     Ok(species) => {
                         svc.cache_rich_species_detached(species);
                         (taxon.gbif_key, name, true)
@@ -1037,10 +1066,11 @@ fn format_bytes(bytes: u64) -> String {
 async fn run_text_mode(
     service: &SpeciesService,
     species_name: &str,
+    policy: LookupPolicy,
 ) -> Result<(), Box<dyn std::error::Error>> {
     println!("Loading {}...", species_name);
     let lookup_span = crate::perf::start_span();
-    match service.lookup(species_name).await {
+    match service.lookup(species_name, policy).await {
         Ok(species) => {
             crate::perf::log_elapsed("text.lookup_total", lookup_span);
             print_text_output(&species);
@@ -1064,6 +1094,7 @@ async fn run_tui_mode(
     service: Arc<SpeciesService>,
     gbif: Arc<GbifClient>,
     initial_name: &str,
+    lookup_policy: LookupPolicy,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let startup_span = crate::perf::start_span();
 
@@ -1071,45 +1102,49 @@ async fn run_tui_mode(
     println!("Loading {}...", initial_name);
 
     let lookup_span = crate::perf::start_span();
-    let (species, species_image, map_image) =
-        if let Some(cached) = service.get_cached_with_images(initial_name).await {
-            let species = cached.species;
-            let (species_image, map_image) = decode_cached_media(
-                &service,
-                &species,
-                CachedMedia {
-                    species_image: cached.species_image,
-                    map_image: cached.map_image,
-                },
-            )
-            .await;
-            crate::perf::log_value("tui.startup.cached_species_hit", &species.scientific_name);
-            crate::perf::log_elapsed("tui.lookup_total", lookup_span);
-            (species, species_image, map_image)
-        } else {
-            match service.lookup(initial_name).await {
-                Ok(species) => {
-                    crate::perf::log_elapsed("tui.lookup_total", lookup_span);
-                    let media_span = crate::perf::start_span();
-                    let (species_image, map_image) = load_cached_media(&service, &species).await;
-                    crate::perf::log_elapsed("tui.initial_media_cache", media_span);
-                    (species, species_image, map_image)
-                }
-                Err(_) if initial_name.eq_ignore_ascii_case(DEFAULT_INITIAL_TAXON) => {
-                    let species = bootstrap_taxon_profile(initial_name)
-                        .expect("default initial taxon profile should exist");
-                    crate::perf::log_value("tui.startup.synthetic_taxon", &species.scientific_name);
-                    crate::perf::log_elapsed("tui.lookup_total", lookup_span);
-                    (species, None, None)
-                }
-                Err(e) => {
-                    crate::perf::log_elapsed("tui.lookup_total", lookup_span);
-                    eprintln!("Error: Species not found: {}", initial_name);
-                    eprintln!("{}", e);
-                    return Ok(());
-                }
+    let cached = if lookup_policy != LookupPolicy::Refresh {
+        service.get_cached_with_images(initial_name).await
+    } else {
+        None
+    };
+    let (species, species_image, map_image) = if let Some(cached) = cached {
+        let species = cached.species;
+        let (species_image, map_image) = decode_cached_media(
+            &service,
+            &species,
+            CachedMedia {
+                species_image: cached.species_image,
+                map_image: cached.map_image,
+            },
+        )
+        .await;
+        crate::perf::log_value("tui.startup.cached_species_hit", &species.scientific_name);
+        crate::perf::log_elapsed("tui.lookup_total", lookup_span);
+        (species, species_image, map_image)
+    } else {
+        match service.lookup(initial_name, lookup_policy).await {
+            Ok(species) => {
+                crate::perf::log_elapsed("tui.lookup_total", lookup_span);
+                let media_span = crate::perf::start_span();
+                let (species_image, map_image) = load_cached_media(&service, &species).await;
+                crate::perf::log_elapsed("tui.initial_media_cache", media_span);
+                (species, species_image, map_image)
             }
-        };
+            Err(_) if initial_name.eq_ignore_ascii_case(DEFAULT_INITIAL_TAXON) => {
+                let species = bootstrap_taxon_profile(initial_name)
+                    .expect("default initial taxon profile should exist");
+                crate::perf::log_value("tui.startup.synthetic_taxon", &species.scientific_name);
+                crate::perf::log_elapsed("tui.lookup_total", lookup_span);
+                (species, None, None)
+            }
+            Err(e) => {
+                crate::perf::log_elapsed("tui.lookup_total", lookup_span);
+                eprintln!("Error: Species not found: {}", initial_name);
+                eprintln!("{}", e);
+                return Ok(());
+            }
+        }
+    };
 
     let meta_span = crate::perf::start_span();
     let (is_favorite, has_offline_search) = tokio::join!(
@@ -1137,6 +1172,7 @@ async fn run_tui_mode(
             update_rx,
             service,
             gbif,
+            lookup_policy,
         },
     )
     .await;
@@ -1472,24 +1508,50 @@ fn print_text_output(species: &UnifiedSpecies) {
         if let Some(mass) = species.life_history.mass_kilograms {
             println!("Mass: {}", format_mass(mass));
         }
-        if !species.life_history.reproduction_modes.is_empty() {
-            println!(
-                "Reproduction: {}",
-                species.life_history.reproduction_modes.join(", ")
-            );
+        if let Some(summary) = species
+            .life_history
+            .reproductive_traits
+            .reproduction_summary()
+        {
+            println!("Reproduction: {summary}");
+        }
+        if let Some(summary) = species
+            .life_history
+            .reproductive_traits
+            .sex_determination_summary()
+        {
+            println!("Sex determination: {summary}");
+        }
+        let mut evidence_sources = BTreeSet::new();
+        for source in species.life_history.reproductive_traits.sources() {
+            evidence_sources.insert((
+                source.dataset.as_str(),
+                source.version.as_deref(),
+                source.url.as_deref(),
+            ));
+        }
+        for (dataset, version, url) in evidence_sources {
+            let version = version
+                .map(|value| format!(" ({value})"))
+                .unwrap_or_default();
+            let url = url.map(|value| format!(" · {value}")).unwrap_or_default();
+            println!("Evidence: {dataset}{version}{url}");
         }
     }
 
-    println!("\n--- Genome ---");
+    println!("\n--- Assembly ---");
     let g = &species.genome;
     if let Some(size) = g.genome_size_bp {
-        println!("Size: {:.2} Gb", size as f64 / 1_000_000_000.0);
+        println!("Genome span: {:.2} Gb", size as f64 / 1_000_000_000.0);
     }
     if let Some(chr) = g.chromosome_count {
-        println!("Chromosomes: {}", chr);
+        println!("Assembly chromosomes: {chr}");
     }
     if let Some(mito) = g.mito_genome_size_bp {
-        println!("Mito: {:.1} kb", mito as f64 / 1000.0);
+        println!("MT length: {:.1} kb", mito as f64 / 1000.0);
+    }
+    if let Some(accession) = &g.assembly_accession {
+        println!("Accession: {accession}");
     }
 
     if let Some(ref desc) = species.description {
@@ -1532,5 +1594,44 @@ fn format_measurement_value(value: f64) -> String {
         format!("{:.0}", value)
     } else {
         format!("{:.1}", value)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{direct_lookup_policy, LookupPolicy};
+    use image::{DynamicImage, ImageFormat};
+    use std::io::Cursor;
+
+    #[test]
+    fn direct_lookup_flags_select_one_unambiguous_policy() {
+        assert_eq!(
+            direct_lookup_policy(false, false),
+            Ok(LookupPolicy::PreferCache)
+        );
+        assert_eq!(
+            direct_lookup_policy(true, false),
+            Ok(LookupPolicy::OfflineOnly)
+        );
+        assert_eq!(direct_lookup_policy(false, true), Ok(LookupPolicy::Refresh));
+        assert!(direct_lookup_policy(true, true).is_err());
+    }
+
+    #[test]
+    fn supported_media_formats_round_trip() {
+        let source = DynamicImage::new_rgb8(2, 2);
+
+        for format in [
+            ImageFormat::Jpeg,
+            ImageFormat::Png,
+            ImageFormat::Gif,
+            ImageFormat::WebP,
+        ] {
+            let mut encoded = Vec::new();
+            source
+                .write_to(&mut Cursor::new(&mut encoded), format)
+                .expect("supported source format should encode");
+            image::load_from_memory(&encoded).expect("supported source format should decode");
+        }
     }
 }

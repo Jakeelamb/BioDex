@@ -1,2 +1,5 @@
 [env]
 TMPDIR = { value = "target/tmp", relative = true }
+
+[resolver]
+incompatible-rust-versions = "fallback"

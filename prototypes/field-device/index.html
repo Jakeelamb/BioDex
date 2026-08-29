@@ -1,0 +1,477 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='3' fill='%23111816'/%3E%3Ccircle cx='8' cy='8' r='3' fill='%23a3b56d'/%3E%3C/svg%3E">
+  <title>BioDex Field Device — Throwaway UI Prototype</title>
+  <!-- Three structurally different BioDex record views, switchable via ?variant=. -->
+  <style>
+    :root {
+      --void: #090d0c;
+      --screen: #111816;
+      --screen-2: #17201d;
+      --panel: #1c2521;
+      --line: #465249;
+      --line-hi: #768174;
+      --bone: #d8d4c0;
+      --muted: #92998d;
+      --lichen: #a3b56d;
+      --amber: #d6a84e;
+      --rust: #873f32;
+      --rust-hi: #b55b45;
+      --cyan: #7ba7a0;
+      --danger: #d26d55;
+      --shadow: #020403;
+      font-family: "IBM Plex Mono", "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
+      color: var(--bone);
+      background: var(--void);
+    }
+
+    * { box-sizing: border-box; }
+    html, body { width: 100%; min-height: 100%; margin: 0; }
+    body {
+      min-height: 100vh;
+      overflow: hidden;
+      background:
+        radial-gradient(circle at 14% 8%, #28302a 0 1px, transparent 2px),
+        radial-gradient(circle at 86% 82%, #202722 0 1px, transparent 2px),
+        linear-gradient(145deg, #101613, #070a09 55%, #151a16);
+      background-size: 23px 23px, 31px 31px, auto;
+    }
+
+    button { font: inherit; }
+    .prototype { display: none; width: 100vw; height: 100vh; padding: 14px 16px 70px; }
+    body[data-variant="A"] #variant-a,
+    body[data-variant="B"] #variant-b,
+    body[data-variant="C"] #variant-c { display: block; }
+
+    .eyebrow { color: var(--muted); font-size: 11px; letter-spacing: .16em; text-transform: uppercase; }
+    .muted { color: var(--muted); }
+    .amber { color: var(--amber); }
+    .lichen { color: var(--lichen); }
+    .cyan { color: var(--cyan); }
+    .danger { color: var(--danger); }
+    .italic { font-style: italic; }
+    .caps { text-transform: uppercase; letter-spacing: .1em; }
+    .rule { height: 1px; background: var(--line); }
+    .led { width: 8px; height: 8px; border-radius: 50%; background: var(--lichen); box-shadow: 0 0 10px #a3b56d88; display: inline-block; }
+    .led.amber-led { background: var(--amber); box-shadow: 0 0 8px #d6a84e77; }
+    .screw { width: 7px; height: 7px; border: 1px solid #252d28; border-radius: 50%; background: #596157; box-shadow: inset 0 0 0 2px #313a34; }
+
+    .tabs { display: flex; gap: 4px; align-items: end; flex-wrap: wrap; }
+    .tab {
+      appearance: none;
+      border: 1px solid var(--line);
+      border-bottom-color: var(--line-hi);
+      background: #111714;
+      color: var(--muted);
+      padding: 8px 14px 7px;
+      cursor: pointer;
+      text-transform: uppercase;
+      letter-spacing: .11em;
+      font-size: 11px;
+    }
+    .tab:hover, .tab.active { color: #101410; background: var(--lichen); border-color: var(--lichen); }
+    .page { display: none; }
+    .page.active { display: grid; }
+
+    .portrait {
+      width: 100%; height: 100%; object-fit: cover; display: block;
+      filter: saturate(.72) contrast(1.08) sepia(.08);
+    }
+    .portrait-wrap { position: relative; overflow: hidden; background: #0b100e; }
+    .portrait-wrap::after {
+      content: ""; position: absolute; inset: 0; pointer-events: none;
+      background: repeating-linear-gradient(0deg, transparent 0 3px, #06100b18 4px 5px);
+      mix-blend-mode: multiply;
+    }
+    .reticle { position: absolute; width: 32px; height: 32px; opacity: .7; }
+    .reticle::before, .reticle::after { content: ""; position: absolute; background: var(--amber); }
+    .reticle::before { width: 32px; height: 1px; top: 15px; }
+    .reticle::after { width: 1px; height: 32px; left: 15px; }
+
+    .fact { border-left: 2px solid var(--line-hi); padding: 3px 0 3px 10px; min-width: 0; }
+    .fact strong { display: block; color: var(--bone); font-size: clamp(17px, 1.3vw, 26px); margin-top: 4px; font-weight: 550; }
+    .fact strong.compact { font-size: clamp(13px, 1vw, 19px); line-height: 1.2; }
+    .fact .unit { color: var(--muted); font-size: 12px; margin-left: 4px; }
+    .calibration { display: grid; grid-template-columns: 92px 1fr 68px; gap: 10px; align-items: center; margin: 12px 0; }
+    .calibration .track { height: 9px; border-top: 1px solid var(--line-hi); border-bottom: 1px solid #252d29; position: relative; background: repeating-linear-gradient(90deg, var(--line) 0 1px, transparent 1px 12.5%); }
+    .calibration .marker { position: absolute; top: -5px; width: 3px; height: 17px; background: var(--amber); box-shadow: 0 0 7px #d6a84e55; }
+    .calibration .value { text-align: right; color: var(--bone); }
+    .provenance { display: flex; gap: 7px; flex-wrap: wrap; }
+    .source { border: 1px solid var(--line); color: var(--muted); padding: 3px 7px; font-size: 10px; letter-spacing: .1em; }
+    .source.confirmed { border-color: #71805c; color: var(--lichen); }
+
+    /* Variant A: optic-first field instrument */
+    .instrument {
+      height: 100%; max-width: 1880px; margin: auto; border: 10px solid #66372f; border-radius: 18px;
+      background: linear-gradient(100deg, #783e32, #4c302b 26%, #713b31 70%, #3e2925);
+      box-shadow: 0 28px 80px #000c, inset 0 0 0 2px #a45a48, inset 0 0 45px #21110f;
+      padding: 18px; position: relative;
+    }
+    .instrument .screw { position: absolute; }
+    .instrument .s1 { top: 8px; left: 8px; } .instrument .s2 { top: 8px; right: 8px; }
+    .instrument .s3 { bottom: 8px; left: 8px; } .instrument .s4 { bottom: 8px; right: 8px; }
+    .a-screen { height: 100%; border: 3px solid #18201c; background: var(--screen); box-shadow: inset 0 0 45px #0008, 0 0 0 1px #9c574644; display: grid; grid-template-rows: 46px minmax(0, 1fr) 44px; }
+    .a-unitbar { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; padding: 0 18px; border-bottom: 2px solid var(--line); background: #18211e; }
+    .a-unitbar .center { color: var(--bone); font-size: 13px; letter-spacing: .18em; }
+    .a-unitbar .right { justify-self: end; display: flex; gap: 16px; font-size: 11px; color: var(--muted); }
+    .a-body { padding: 16px; display: grid; grid-template-rows: minmax(300px, 1fr) 42px minmax(130px, 21%); gap: 10px; min-height: 0; }
+    .a-hero { display: grid; grid-template-columns: minmax(320px, 42%) 1fr; gap: 18px; min-height: 0; }
+    .a-optic { border: 1px solid var(--line-hi); padding: 6px; position: relative; background: #090e0c; }
+    .a-optic .portrait-wrap { height: 100%; }
+    .optic-label { position: absolute; left: 13px; top: 13px; z-index: 2; background: #0b100dcc; color: var(--lichen); border-left: 3px solid var(--lichen); padding: 5px 8px; font-size: 10px; letter-spacing: .14em; }
+    .optic-id { position: absolute; right: 14px; bottom: 13px; z-index: 2; background: #0b100dcc; padding: 5px 8px; color: var(--muted); font-size: 10px; }
+    .a-summary { min-width: 0; display: grid; grid-template-rows: auto 1fr auto; border-top: 3px solid var(--lichen); padding-top: 14px; }
+    .a-name { display: grid; grid-template-columns: 1fr auto; gap: 20px; }
+    .a-name h1 { margin: 4px 0 3px; color: var(--bone); font-size: clamp(30px, 3vw, 58px); line-height: .95; font-weight: 650; letter-spacing: -.04em; }
+    .a-name .latin { color: var(--muted); font-size: clamp(15px, 1.2vw, 22px); }
+    .record-stamp { border: 1px solid var(--amber); color: var(--amber); padding: 10px 12px; align-self: start; text-align: right; font-size: 11px; line-height: 1.7; }
+    .a-facts { align-self: center; display: grid; grid-template-columns: repeat(4, minmax(90px, 1fr)); gap: 12px; }
+    .a-description { color: #b9bdad; max-width: 90ch; line-height: 1.6; font-size: clamp(12px, .9vw, 15px); border-top: 1px solid var(--line); padding-top: 11px; }
+    .a-content { border: 1px solid var(--line); min-height: 0; padding: 13px 16px; overflow: hidden; }
+    .a-content .page { grid-template-columns: 1.15fr .85fr; gap: 28px; height: 100%; }
+    .field-note { border-left: 3px solid var(--amber); padding: 10px 13px; background: #171b15; color: #c4c2af; line-height: 1.55; }
+    .a-footer { border-top: 1px solid var(--line); display: flex; align-items: center; justify-content: space-between; padding: 0 16px; background: #151c19; font-size: 11px; }
+    .commands { display: flex; gap: 22px; color: var(--muted); }
+    .commands b { color: var(--bone); font-weight: 500; }
+
+    /* Variant B: salvaged split-console */
+    .salvage {
+      height: 100%; max-width: 1880px; margin: auto; border: 2px solid #665a43; background: #111513;
+      box-shadow: 0 28px 80px #000d, inset 0 0 80px #0008; display: grid; grid-template-columns: 78px minmax(0, 1fr); position: relative;
+    }
+    .b-rail { background: linear-gradient(#3b3227, #1c211c 22%, #253028 75%, #403326); border-right: 2px solid #73654b; display: flex; flex-direction: column; align-items: center; padding: 14px 8px; gap: 12px; }
+    .b-rail .vertical { writing-mode: vertical-rl; transform: rotate(180deg); letter-spacing: .18em; color: var(--amber); margin: 8px 0 auto; font-size: 11px; }
+    .rail-key { width: 42px; height: 42px; border: 1px solid #6c6757; background: #242b25; color: var(--bone); box-shadow: inset 0 -4px 0 #101511; cursor: pointer; }
+    .b-console { min-width: 0; display: grid; grid-template-rows: 38px minmax(0, 1fr) 34px; }
+    .b-header { padding: 0 12px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px dashed #655b47; background: #191e19; font-size: 11px; }
+    .b-main { min-height: 0; padding: 10px; display: grid; grid-template-columns: minmax(300px, 34%) minmax(420px, 1fr) minmax(220px, 25%); grid-template-rows: 58% 42%; gap: 9px; }
+    .b-module { border: 1px solid #5d6457; background: #111714; position: relative; min-height: 0; overflow: hidden; }
+    .b-module-title { position: absolute; z-index: 3; top: -1px; left: 10px; background: #5d6457; color: #111411; padding: 4px 8px; font-size: 10px; letter-spacing: .12em; }
+    .b-optic { grid-row: 1; padding: 27px 7px 7px; }
+    .b-optic .portrait-wrap { height: 100%; border: 1px solid #252e29; }
+    .b-record { grid-column: 2; grid-row: 1; padding: 32px 16px 10px; }
+    .b-record h1 { font-size: clamp(28px, 2.6vw, 50px); margin: 2px 0; line-height: .96; color: var(--bone); }
+    .b-record .id-line { display: flex; gap: 14px; align-items: center; margin: 12px 0 20px; }
+    .hazard-plate { padding: 4px 7px; border: 1px solid var(--lichen); color: var(--lichen); font-size: 10px; }
+    .b-facts { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px 16px; }
+    .b-fact { border-bottom: 1px dashed var(--line); padding-bottom: 7px; display: flex; justify-content: space-between; gap: 12px; }
+    .b-log { grid-column: 3; grid-row: 1 / span 2; padding: 34px 12px 12px; }
+    .log-line { display: grid; grid-template-columns: 58px 1fr; gap: 8px; padding: 7px 0; border-bottom: 1px solid #273029; font-size: 11px; line-height: 1.35; }
+    .log-time { color: #6f786c; }
+    .log-line.hot { color: var(--amber); }
+    .b-range { grid-column: 1 / span 2; grid-row: 2; padding: 30px 10px 8px; display: grid; grid-template-columns: 44% 1fr; gap: 14px; }
+    .b-map { min-height: 0; overflow: hidden; border: 1px solid #29352e; background: #0a100d; }
+    .b-map img { width: 100%; height: 100%; object-fit: cover; filter: saturate(.45) sepia(.25) contrast(1.2) brightness(.7) hue-rotate(55deg); }
+    .b-analysis { padding: 2px 8px; min-width: 0; }
+    .b-analysis h3 { margin: 0 0 12px; font-size: 12px; color: var(--amber); letter-spacing: .12em; }
+    .b-footer { border-top: 1px dashed #655b47; display: flex; justify-content: space-between; align-items: center; padding: 0 12px; font-size: 10px; color: var(--muted); }
+
+    /* Variant C: minimal expedition slate */
+    .slate {
+      height: 100%; max-width: 1760px; margin: auto; border: 4px solid #303832; border-radius: 10px; padding: 8px;
+      background: linear-gradient(110deg, #242c27, #151b18 60%, #34362d); box-shadow: 0 30px 90px #000d, inset 0 0 0 1px #697067;
+    }
+    .c-screen { height: 100%; background: #101613; display: grid; grid-template-rows: minmax(290px, 48%) 45px minmax(0, 1fr) 36px; overflow: hidden; }
+    .c-hero { position: relative; overflow: hidden; }
+    .c-hero .portrait { filter: saturate(.55) contrast(1.12) brightness(.62); object-position: center 43%; }
+    .c-hero::after { content: ""; position: absolute; inset: 0; background: linear-gradient(90deg, #0c120fee 0 25%, transparent 60%), linear-gradient(0deg, #101613 0, transparent 32%); }
+    .c-brand { position: absolute; z-index: 3; top: 18px; left: 22px; display: flex; gap: 12px; align-items: center; font-size: 11px; letter-spacing: .18em; }
+    .c-id { position: absolute; z-index: 3; left: 24px; bottom: 24px; max-width: 620px; }
+    .c-id h1 { margin: 4px 0 5px; font-size: clamp(38px, 4vw, 72px); line-height: .88; letter-spacing: -.05em; }
+    .c-id .latin { font-size: clamp(15px, 1.3vw, 23px); color: #bbc0b2; }
+    .c-lock { position: absolute; z-index: 3; right: 28px; top: 24px; text-align: right; }
+    .c-confidence { font-size: clamp(26px, 2.5vw, 44px); color: var(--lichen); }
+    .c-tabs { padding: 0 20px; border-top: 1px solid #263029; border-bottom: 1px solid #475249; background: #151d19; align-items: center; }
+    .c-tabs .tab { border: 0; background: transparent; padding: 8px 14px; border-left: 2px solid transparent; }
+    .c-tabs .tab.active { color: var(--bone); background: #202a24; border-left-color: var(--amber); }
+    .c-content { min-height: 0; overflow: hidden; padding: 16px 22px; }
+    .c-content .page { height: 100%; grid-template-columns: 1fr 1fr; gap: 30px; }
+    .c-vitals { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }
+    .c-vital { border-top: 2px solid var(--line-hi); padding: 9px 2px; }
+    .c-vital strong { display: block; font-size: clamp(25px, 2.1vw, 40px); font-weight: 450; margin: 4px 0; }
+    .c-note { align-self: stretch; border-left: 1px solid var(--line); padding-left: 20px; line-height: 1.65; color: #bbbbaa; }
+    .c-footer { display: flex; align-items: center; justify-content: space-between; padding: 0 20px; background: #d0cbb6; color: #18201c; font-size: 10px; letter-spacing: .08em; }
+
+    .drawer {
+      position: fixed; z-index: 20; top: 26px; right: 26px; bottom: 84px; width: min(420px, 42vw);
+      transform: translateX(calc(100% + 50px)); transition: transform .16s ease-out;
+      background: #121916f5; border: 2px solid var(--line-hi); box-shadow: -20px 20px 70px #000b; padding: 16px;
+    }
+    .drawer.open { transform: translateX(0); }
+    .drawer-head { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--line); padding-bottom: 12px; }
+    .drawer button { background: transparent; border: 1px solid var(--line); color: var(--bone); cursor: pointer; }
+    .search-box { margin: 14px 0; border: 1px solid var(--amber); padding: 11px; color: var(--amber); }
+    .species-row { padding: 8px 7px; border-bottom: 1px solid #28312b; display: flex; justify-content: space-between; font-size: 12px; }
+    .species-row.active { color: #101410; background: var(--lichen); }
+
+    .switcher {
+      position: fixed; z-index: 50; left: 50%; bottom: 14px; transform: translateX(-50%);
+      display: grid; grid-template-columns: 44px minmax(310px, auto) 44px; align-items: center;
+      background: #ece8d7; color: #171b18; border: 2px solid #111; box-shadow: 0 9px 30px #000b;
+    }
+    .switcher button { height: 40px; border: 0; background: #1a201c; color: var(--bone); cursor: pointer; font-size: 18px; }
+    .switch-label { padding: 0 16px; text-align: center; font-size: 12px; white-space: nowrap; }
+    .switch-label b { letter-spacing: .08em; }
+    .proto-mark { position: fixed; z-index: 51; bottom: 18px; left: 18px; color: #7c857b; font-size: 9px; letter-spacing: .15em; }
+
+    @media (max-width: 980px) {
+      .prototype { padding: 7px 7px 64px; }
+      .instrument { padding: 9px; border-width: 6px; }
+      .a-screen { grid-template-rows: 38px minmax(0, 1fr) 38px; }
+      .a-unitbar { grid-template-columns: 1fr auto; }
+      .a-unitbar .center { display: none; }
+      .a-body { grid-template-rows: minmax(260px, 52%) 40px minmax(0, 1fr); padding: 9px; }
+      .a-hero { grid-template-columns: 42% 1fr; gap: 10px; }
+      .a-name h1 { font-size: 30px; }
+      .a-facts { grid-template-columns: repeat(2, 1fr); }
+      .a-description { display: none; }
+      .b-main { grid-template-columns: 38% 1fr; grid-template-rows: 52% 48%; }
+      .b-log { display: none; }
+      .b-range { grid-column: 1 / span 2; }
+      .c-content .page { grid-template-columns: 1fr; }
+      .c-note { display: none; }
+      .drawer { width: min(420px, 70vw); }
+    }
+
+    @media (max-width: 680px) {
+      .a-hero { grid-template-columns: 1fr; grid-template-rows: 45% 1fr; }
+      .a-optic { min-height: 0; }
+      .a-facts { gap: 5px; }
+      .record-stamp { display: none; }
+      .a-content .page { grid-template-columns: 1fr; }
+      .calibration { grid-template-columns: 75px 1fr 55px; }
+      .commands span:nth-child(n+3) { display: none; }
+      .salvage { grid-template-columns: 48px minmax(0, 1fr); }
+      .b-rail { padding-inline: 3px; }
+      .rail-key { width: 34px; height: 34px; }
+      .b-main { grid-template-columns: 1fr; grid-template-rows: 38% 62%; }
+      .b-optic { display: none; }
+      .b-record { grid-column: 1; }
+      .b-range { grid-column: 1; grid-template-columns: 1fr; }
+      .b-analysis { display: none; }
+      .c-screen { grid-template-rows: 42% 42px 1fr 34px; }
+      .c-vitals { gap: 7px; }
+      .switcher { grid-template-columns: 38px minmax(220px, auto) 38px; }
+      .switch-label { font-size: 10px; padding: 0 7px; }
+    }
+  </style>
+</head>
+<body data-variant="A">
+  <main>
+    <section class="prototype" id="variant-a" aria-label="Variant A: rugged field instrument">
+      <div class="instrument">
+        <i class="screw s1"></i><i class="screw s2"></i><i class="screw s3"></i><i class="screw s4"></i>
+        <div class="a-screen">
+          <header class="a-unitbar">
+            <div><span class="led"></span> <span class="eyebrow">BIODEX // FIELD UNIT 07</span></div>
+            <div class="center">XENOBIOLOGICAL RECORD</div>
+            <div class="right"><span>LINK <b class="amber">LOCAL</b></span><span>ENV 11.4°C</span><span>PWR 74%</span></div>
+          </header>
+          <div class="a-body">
+            <section class="a-hero">
+              <div class="a-optic">
+                <div class="portrait-wrap">
+                  <img class="portrait" src="https://inaturalist-open-data.s3.amazonaws.com/photos/95268822/original.jpg" alt="Mallards at the edge of a lake">
+                  <span class="optic-label">OPTICAL RECORD // 03</span>
+                  <span class="optic-id">CAPTURE 2026.228 · 42.9°N</span>
+                  <i class="reticle" style="left:48%;top:47%"></i>
+                </div>
+              </div>
+              <div class="a-summary">
+                <div class="a-name">
+                  <div>
+                    <div class="eyebrow">CATALOG AX-0042 · AVES / ANATIDAE</div>
+                    <h1>MALLARD</h1>
+                    <div class="latin italic">Anas platyrhynchos</div>
+                  </div>
+                  <div class="record-stamp">IDENTITY <b>CONFIRMED</b><br>4 SOURCES AGREE<br><span class="lichen">● 0.96 CONF</span></div>
+                </div>
+                <div class="a-facts">
+                  <div class="fact"><span class="eyebrow">HAZARD</span><strong class="lichen">LOW</strong></div>
+                  <div class="fact"><span class="eyebrow">MASS</span><strong>1.0<span class="unit">kg</span></strong></div>
+                  <div class="fact"><span class="eyebrow">LENGTH</span><strong>57<span class="unit">cm</span></strong></div>
+                  <div class="fact"><span class="eyebrow">STATUS</span><strong class="lichen">LC</strong></div>
+                  <div class="fact"><span class="eyebrow">SEX DETERMINATION</span><strong class="compact">ZW ♀ / ZZ ♂</strong></div>
+                  <div class="fact"><span class="eyebrow">REPRODUCTION</span><strong class="compact">SEXUAL · OVIPAROUS</strong></div>
+                  <div class="fact"><span class="eyebrow">ASSEMBLY CHR</span><strong>41</strong></div>
+                  <div class="fact"><span class="eyebrow">MT LENGTH</span><strong>15.6<span class="unit">kb</span></strong></div>
+                </div>
+                <div class="a-description">A highly adaptable aquatic bird recorded across temperate wetlands. Strong sexual dimorphism. Current specimen matches established plumage, morphology, and range signals.</div>
+              </div>
+            </section>
+            <nav class="tabs" aria-label="Record pages">
+              <button class="tab active" data-page="profile">01 Profile</button>
+              <button class="tab" data-page="range">02 Range</button>
+              <button class="tab" data-page="taxonomy">03 Taxonomy</button>
+              <button class="tab" data-page="sources">04 Sources</button>
+            </nav>
+            <section class="a-content pages">
+              <div class="page active" data-page="profile">
+                <div>
+                  <div class="eyebrow">CALIBRATED AGAINST ORDER ANSERIFORMES</div>
+                  <div class="calibration"><span>LIFESPAN</span><div class="track"><i class="marker" style="left:24%"></i></div><span class="value">3 yr</span></div>
+                  <div class="calibration"><span>BODY MASS</span><div class="track"><i class="marker" style="left:43%"></i></div><span class="value">1.0 kg</span></div>
+                  <div class="calibration"><span>LENGTH</span><div class="track"><i class="marker" style="left:56%"></i></div><span class="value">57 cm</span></div>
+                </div>
+                <div>
+                  <div class="field-note"><span class="eyebrow amber">FIELD NOTE // AUTO-SYNTHESIS</span><br>Observed in paired formation near shallow fresh water. Geographic signal is broad and well corroborated. No anomalous morphology detected.</div>
+                  <div class="provenance" style="margin-top:13px"><span class="source confirmed">GBIF ✓</span><span class="source confirmed">NCBI ✓</span><span class="source confirmed">INAT ✓</span><span class="source confirmed">WIKI ✓</span></div>
+                </div>
+              </div>
+              <div class="page" data-page="range"><div class="field-note">Range page would give the map the entire lower instrument surface.</div></div>
+              <div class="page" data-page="taxonomy"><div class="field-note">Animalia → Chordata → Aves → Anseriformes → Anatidae → Anas → <i>A. platyrhynchos</i></div></div>
+              <div class="page" data-page="sources">
+                <div class="field-note"><span class="eyebrow amber">EVIDENCE REGISTER</span><br>Identity + range · GBIF / iNaturalist<br>Assembly chromosomes + MT length · NCBI / Ensembl assembly<br>Sex determination · curated literature dataset<br>Reproduction · referenced taxon trait</div>
+                <div class="field-note"><span class="eyebrow lichen">INTERPRETATION</span><br><b>41</b> is assembly-scoped—not diploid <i>2n</i>.<br><b>ZW / ZZ</b> is a species trait—not specimen sex.<br>Unknown, variable, and conflicting claims remain visible.</div>
+              </div>
+            </section>
+          </div>
+          <footer class="a-footer"><span><b class="lichen">READY</b> · RECORD RESOLVED</span><div class="commands"><span><b>↑↓</b> PAGE</span><span><b>ENTER</b> OPEN</span><span><b>/</b> FIND</span><span><b>N</b> NOTE</span><span><b>?</b> HELP</span></div></footer>
+        </div>
+      </div>
+    </section>
+
+    <section class="prototype" id="variant-b" aria-label="Variant B: salvaged split-console">
+      <div class="salvage">
+        <aside class="b-rail">
+          <span class="led amber-led"></span><span class="vertical">BIODEX // MODIFIED SURVEY KIT</span>
+          <button class="rail-key" data-open-drawer title="Find species">/</button>
+          <button class="rail-key" title="Save record">+</button>
+          <button class="rail-key" title="Return">↩</button>
+        </aside>
+        <div class="b-console">
+          <header class="b-header"><span><b class="amber">CHANNEL 03</b> / TAXON SIGNAL LOCKED</span><span>LOCAL ARCHIVE · DIRTY LINK · <b class="lichen">4/4 SOURCES</b></span></header>
+          <section class="b-main">
+            <div class="b-module b-optic"><span class="b-module-title">OPTIC_FEED</span><div class="portrait-wrap"><img class="portrait" src="https://inaturalist-open-data.s3.amazonaws.com/photos/95268822/original.jpg" alt="Mallards at a lake"></div></div>
+            <div class="b-module b-record">
+              <span class="b-module-title">FIELD_RECORD AX-0042</span>
+              <div class="eyebrow">MATCH 0.96 / PLUMAGE + RANGE + MORPHOLOGY</div>
+              <h1>MALLARD</h1><div class="italic muted">Anas platyrhynchos</div>
+              <div class="id-line"><span class="hazard-plate">HAZARD // LOW</span><span class="hazard-plate">IUCN // LC</span><span class="muted">Aves · Anatidae</span></div>
+              <div class="b-facts">
+                <div class="b-fact"><span class="muted">MASS</span><b>1.0 kg</b></div><div class="b-fact"><span class="muted">LENGTH</span><b>57 cm</b></div>
+                <div class="b-fact"><span class="muted">LIFESPAN</span><b>3 yr</b></div><div class="b-fact"><span class="muted">GENOME</span><b>1.26 Gb</b></div>
+                <div class="b-fact"><span class="muted">REPRO</span><b>SEXUAL</b></div><div class="b-fact"><span class="muted">SIGNAL</span><b class="lichen">STRONG</b></div>
+              </div>
+            </div>
+            <aside class="b-module b-log">
+              <span class="b-module-title">RECONCILIATION_LOG</span>
+              <div class="log-line"><span class="log-time">18:42:01</span><span>GBIF identity response received</span></div>
+              <div class="log-line"><span class="log-time">18:42:01</span><span>NCBI lineage agrees</span></div>
+              <div class="log-line"><span class="log-time">18:42:02</span><span>iNaturalist optic selected</span></div>
+              <div class="log-line hot"><span class="log-time">18:42:02</span><span>range exceeds local sector</span></div>
+              <div class="log-line"><span class="log-time">18:42:03</span><span>profile committed to field cache</span></div>
+              <div style="margin-top:20px" class="eyebrow">FIELD MEMO</div>
+              <p style="font-size:12px;line-height:1.55;color:#b7b7a6">Paired subjects at shoreline. No defensive response. One male, one female; morphology consistent with archive.</p>
+            </aside>
+            <div class="b-module b-range">
+              <span class="b-module-title">RANGE_SIGNAL / EARTH</span>
+              <div class="b-map"><img src="../../assets/maps/ne_basemap.png" alt="World range map"></div>
+              <div class="b-analysis">
+                <h3>DISTRIBUTION TRACE</h3>
+                <div class="calibration"><span>COVERAGE</span><div class="track"><i class="marker" style="left:82%"></i></div><span class="value">BROAD</span></div>
+                <div class="calibration"><span>QUALITY</span><div class="track"><i class="marker" style="left:91%"></i></div><span class="value">0.91</span></div>
+                <p class="muted" style="font-size:11px;line-height:1.5">North America · Europe · Asia · Oceania · Northern Africa. Migratory populations produce seasonal variance.</p>
+                <div class="provenance"><span class="source confirmed">GBIF</span><span class="source confirmed">INAT</span><span class="source">CACHE 18m</span></div>
+              </div>
+            </div>
+          </section>
+          <footer class="b-footer"><span>↑↓ TRACE · → INSPECT · / INDEX · R RESCAN · N LOG</span><span class="amber">CASE OPEN // UNSAVED</span></footer>
+        </div>
+      </div>
+    </section>
+
+    <section class="prototype" id="variant-c" aria-label="Variant C: minimal expedition field slate">
+      <div class="slate">
+        <div class="c-screen">
+          <section class="c-hero">
+            <img class="portrait" src="https://inaturalist-open-data.s3.amazonaws.com/photos/95268822/original.jpg" alt="Mallards at the edge of a lake">
+            <div class="c-brand"><span class="led"></span> BIODEX · EXPEDITION SLATE 04</div>
+            <div class="c-id"><div class="eyebrow">FIELD RECORD AX-0042 · ANIMALIA</div><h1>MALLARD</h1><div class="latin italic">Anas platyrhynchos</div></div>
+            <div class="c-lock"><div class="eyebrow">IDENTITY LOCK</div><div class="c-confidence">96%</div><div class="muted" style="font-size:10px">4 SOURCES AGREE</div></div>
+          </section>
+          <nav class="tabs c-tabs"><button class="tab active" data-page="profile">Profile</button><button class="tab" data-page="range">Range</button><button class="tab" data-page="taxonomy">Lineage</button><button class="tab" data-page="sources">Sources</button></nav>
+          <section class="c-content pages">
+            <div class="page active" data-page="profile">
+              <div class="c-vitals">
+                <div class="c-vital"><span class="eyebrow">MASS</span><strong>1.0 kg</strong><span class="muted">adult mean</span></div>
+                <div class="c-vital"><span class="eyebrow">LENGTH</span><strong>57 cm</strong><span class="muted">adult mean</span></div>
+                <div class="c-vital"><span class="eyebrow">HAZARD</span><strong class="lichen">LOW</strong><span class="muted">no alert traits</span></div>
+                <div class="c-vital"><span class="eyebrow">RANGE</span><strong>BROAD</strong><span class="muted">6 regions</span></div>
+              </div>
+              <div class="c-note"><span class="eyebrow amber">SYNTHESIZED FIELD NOTE</span><p>A highly adaptable aquatic bird recorded across temperate wetlands. Strong sexual dimorphism. Current specimen matches established plumage, morphology, and range signals.</p><div class="rule"></div><p class="muted">Animalia / Chordata / Aves / Anseriformes / Anatidae / <i>Anas</i></p></div>
+            </div>
+            <div class="page" data-page="range"><div class="c-vitals"><div class="c-vital"><span class="eyebrow">RANGE SIGNAL</span><strong>0.91</strong></div><div class="c-vital"><span class="eyebrow">REGIONS</span><strong>6</strong></div></div><div class="c-note">Full-width map replaces this summary when promoted to production.</div></div>
+            <div class="page" data-page="taxonomy"><div class="c-vitals"><div class="c-vital"><span class="eyebrow">KINGDOM</span><strong>Animalia</strong></div><div class="c-vital"><span class="eyebrow">CLASS</span><strong>Aves</strong></div></div><div class="c-note">Chordata → Aves → Anseriformes → Anatidae → Anas</div></div>
+            <div class="page" data-page="sources"><div class="c-vitals"><div class="c-vital"><span class="eyebrow">AGREEMENT</span><strong class="lichen">4 / 4</strong></div><div class="c-vital"><span class="eyebrow">CACHE AGE</span><strong>18 min</strong></div></div><div class="c-note">GBIF, NCBI, iNaturalist, and Wikipedia currently agree on the resolved taxon.</div></div>
+          </section>
+          <footer class="c-footer"><span>LOCAL MODE · RECORD READY</span><span>↑↓ PAGE · ENTER OPEN · / FIND · N NOTE · ? HELP</span></footer>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <aside class="drawer" id="species-drawer" aria-label="Species navigator prototype">
+    <div class="drawer-head"><div><div class="eyebrow">FIELD INDEX</div><b>99 LOCAL RECORDS</b></div><button id="close-drawer"> × </button></div>
+    <div class="search-box">/ mallard<span class="muted">_</span></div>
+    <div class="species-row active"><span><i>Anas platyrhynchos</i></span><span>0.96</span></div>
+    <div class="species-row"><span><i>Anser albifrons</i></span><span class="muted">cached</span></div>
+    <div class="species-row"><span><i>Cygnus atratus</i></span><span class="muted">cached</span></div>
+    <div class="species-row"><span><i>Somniosus microcephalus</i></span><span class="muted">cached</span></div>
+    <div class="species-row"><span>Search live sources…</span><span class="amber">LINK</span></div>
+  </aside>
+
+  <div class="proto-mark">THROWAWAY PROTOTYPE · ZERO PERSISTENCE</div>
+  <nav class="switcher" aria-label="Prototype variant switcher">
+    <button id="previous" aria-label="Previous variant">←</button>
+    <div class="switch-label"><b id="variant-label">A · RUGGED FIELD INSTRUMENT</b><br><span>←/→ switch · press / for field index</span></div>
+    <button id="next" aria-label="Next variant">→</button>
+  </nav>
+
+  <script>
+    const variants = [
+      { key: "A", name: "RUGGED FIELD INSTRUMENT" },
+      { key: "B", name: "SALVAGED SPLIT-CONSOLE" },
+      { key: "C", name: "EXPEDITION FIELD SLATE" }
+    ];
+    const params = new URLSearchParams(location.search);
+    let current = Math.max(0, variants.findIndex(v => v.key === (params.get("variant") || "A").toUpperCase()));
+
+    function showVariant(index) {
+      current = (index + variants.length) % variants.length;
+      const variant = variants[current];
+      document.body.dataset.variant = variant.key;
+      document.getElementById("variant-label").textContent = `${variant.key} · ${variant.name}`;
+      const url = new URL(location.href);
+      url.searchParams.set("variant", variant.key);
+      history.replaceState({}, "", url);
+      document.getElementById("species-drawer").classList.remove("open");
+    }
+
+    document.getElementById("previous").addEventListener("click", () => showVariant(current - 1));
+    document.getElementById("next").addEventListener("click", () => showVariant(current + 1));
+    document.getElementById("close-drawer").addEventListener("click", () => document.getElementById("species-drawer").classList.remove("open"));
+    document.querySelectorAll("[data-open-drawer]").forEach(button => button.addEventListener("click", () => document.getElementById("species-drawer").classList.toggle("open")));
+
+    document.querySelectorAll(".prototype").forEach(prototype => {
+      prototype.querySelectorAll(".tab").forEach(tab => tab.addEventListener("click", () => {
+        prototype.querySelectorAll(".tab").forEach(candidate => candidate.classList.toggle("active", candidate === tab));
+        prototype.querySelectorAll(".page").forEach(page => page.classList.toggle("active", page.dataset.page === tab.dataset.page));
+      }));
+    });
+
+    document.addEventListener("keydown", event => {
+      if (["INPUT", "TEXTAREA"].includes(document.activeElement.tagName) || document.activeElement.isContentEditable) return;
+      if (event.key === "ArrowLeft") showVariant(current - 1);
+      if (event.key === "ArrowRight") showVariant(current + 1);
+      if (event.key === "/") { event.preventDefault(); document.getElementById("species-drawer").classList.toggle("open"); }
+      if (event.key === "Escape") document.getElementById("species-drawer").classList.remove("open");
+    });
+
+    showVariant(current);
+  </script>
+</body>
+</html>
