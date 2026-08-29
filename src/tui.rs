@@ -21,6 +21,7 @@ use ratatui::{
     },
 };
 use ratatui_image::{picker::Picker, protocol::StatefulProtocol, Resize, StatefulImage};
+use std::borrow::Cow;
 use std::io::stdout;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -316,6 +317,7 @@ struct RenderState<'a> {
     navigator_focus: NavigatorFocus,
     image_state: &'a mut Option<PortraitImageState>,
     map_state: &'a mut Option<MapImageState>,
+    ascii_range_cache: &'a mut AsciiRangeCache,
     search_mode: bool,
     search_query: &'a str,
     search_suggestions: Option<&'a [SearchSuggestion]>,
@@ -381,6 +383,55 @@ struct MapImageState {
     source: DynamicImage,
     rendered_area: Option<(u16, u16)>,
     protocol: Option<StatefulProtocol>,
+}
+
+#[derive(Default)]
+struct AsciiRangeCache {
+    species_name: String,
+    area: Option<(u16, u16)>,
+    bounding_box_bits: Option<[u64; 4]>,
+    continents: Vec<String>,
+    rows: Vec<String>,
+}
+
+impl AsciiRangeCache {
+    fn rows_for(&mut self, species: &UnifiedSpecies, width: u16, height: u16) -> &[String] {
+        let bounding_box_bits = species.distribution.bounding_box.as_ref().map(|bbox| {
+            [
+                bbox.min_latitude.to_bits(),
+                bbox.max_latitude.to_bits(),
+                bbox.min_longitude.to_bits(),
+                bbox.max_longitude.to_bits(),
+            ]
+        });
+        let cache_hit = self.species_name == species.scientific_name
+            && self.area == Some((width, height))
+            && self.bounding_box_bits == bounding_box_bits
+            && self.continents == species.distribution.continents;
+
+        if !cache_hit {
+            let bounding_box = species.distribution.bounding_box.as_ref().map(|bbox| {
+                (
+                    bbox.min_latitude,
+                    bbox.max_latitude,
+                    bbox.min_longitude,
+                    bbox.max_longitude,
+                )
+            });
+            self.rows = crate::world_map::generate_ascii_range_map(
+                width as usize,
+                height as usize,
+                bounding_box,
+                &species.distribution.continents,
+            );
+            self.species_name.clone_from(&species.scientific_name);
+            self.area = Some((width, height));
+            self.bounding_box_bits = bounding_box_bits;
+            self.continents.clone_from(&species.distribution.continents);
+        }
+
+        &self.rows
+    }
 }
 
 impl MapImageState {
@@ -466,6 +517,7 @@ pub async fn run_tui_loop(
         .as_ref()
         .zip(map_image.as_ref())
         .map(|(p, i)| MapImageState::new(*p, i.clone()));
+    let mut ascii_range_cache = AsciiRangeCache::default();
     let mut show_help = false;
     let mut search_mode = false;
     let mut search_query = String::new();
@@ -517,6 +569,7 @@ pub async fn run_tui_loop(
                     navigator_focus,
                     image_state: &mut image_state,
                     map_state: &mut map_state,
+                    ascii_range_cache: &mut ascii_range_cache,
                     search_mode,
                     search_query: &search_query,
                     search_suggestions: search_suggestions.as_deref(),
@@ -1462,14 +1515,21 @@ pub async fn fetch_media_background(
 }
 
 fn child_rank_for(rank: &str) -> Option<&'static str> {
-    match rank.to_ascii_uppercase().as_str() {
-        "KINGDOM" => Some("PHYLUM"),
-        "PHYLUM" => Some("CLASS"),
-        "CLASS" => Some("ORDER"),
-        "ORDER" => Some("FAMILY"),
-        "FAMILY" => Some("GENUS"),
-        "GENUS" => Some("SPECIES"),
-        _ => None,
+    let rank = rank.trim();
+    if rank.eq_ignore_ascii_case("KINGDOM") {
+        Some("PHYLUM")
+    } else if rank.eq_ignore_ascii_case("PHYLUM") {
+        Some("CLASS")
+    } else if rank.eq_ignore_ascii_case("CLASS") {
+        Some("ORDER")
+    } else if rank.eq_ignore_ascii_case("ORDER") {
+        Some("FAMILY")
+    } else if rank.eq_ignore_ascii_case("FAMILY") {
+        Some("GENUS")
+    } else if rank.eq_ignore_ascii_case("GENUS") {
+        Some("SPECIES")
+    } else {
+        None
     }
 }
 
@@ -2282,6 +2342,7 @@ fn render_wide_layout(frame: &mut Frame, area: Rect, state: &mut RenderState<'_>
         state.species,
         state.image_state,
         state.map_state,
+        state.ascii_range_cache,
         state.is_favorite,
     );
     render_stats_panel(frame, chunks[1], state.species, state.is_favorite);
@@ -2301,6 +2362,7 @@ fn render_medium_layout(frame: &mut Frame, area: Rect, state: &mut RenderState<'
         state.species,
         state.image_state,
         state.map_state,
+        state.ascii_range_cache,
         state.is_favorite,
     );
     render_stats_panel(frame, top_chunks[1], state.species, state.is_favorite);
@@ -2321,6 +2383,7 @@ fn render_narrow_layout(frame: &mut Frame, area: Rect, state: &mut RenderState<'
         state.species,
         state.image_state,
         state.map_state,
+        state.ascii_range_cache,
         state.is_favorite,
     );
     render_stats_panel(frame, chunks[1], state.species, state.is_favorite);
@@ -2333,6 +2396,7 @@ fn render_image_panel(
     species: &UnifiedSpecies,
     image_state: &mut Option<PortraitImageState>,
     map_state: &mut Option<MapImageState>,
+    ascii_range_cache: &mut AsciiRangeCache,
     is_favorite: bool,
 ) {
     let block = Block::default()
@@ -2351,7 +2415,7 @@ fn render_image_panel(
         let chunks =
             Layout::vertical([Constraint::Min(0), Constraint::Length(map_height)]).split(inner);
         render_portrait_view(frame, chunks[0], species, image_state, is_favorite);
-        render_range_strip(frame, chunks[1], species, map_state);
+        render_range_strip(frame, chunks[1], species, map_state, ascii_range_cache);
     } else {
         render_portrait_view(frame, inner, species, image_state, is_favorite);
     }
@@ -2449,6 +2513,7 @@ fn render_range_strip(
     area: Rect,
     species: &UnifiedSpecies,
     map_state: &mut Option<MapImageState>,
+    ascii_range_cache: &mut AsciiRangeCache,
 ) {
     let title = if !species.distribution.continents.is_empty() {
         format!(
@@ -2483,7 +2548,7 @@ fn render_range_strip(
     }
 
     if inner.width >= 16 && inner.height >= 3 {
-        render_ascii_range_content(frame, inner, species, false);
+        render_ascii_range_content(frame, inner, species, false, ascii_range_cache);
     } else {
         frame.render_widget(
             Paragraph::new(Line::from(range_summary_spans(species))).wrap(Wrap { trim: true }),
@@ -2652,7 +2717,7 @@ fn render_stats_footer(frame: &mut Frame, area: Rect, species: &UnifiedSpecies) 
     if area.height >= 6 {
         if let Some(notes) = field_notes_text(species) {
             lines.push(Line::from(Span::styled(
-                trim_for_line(&notes, area.width.saturating_mul(2) as usize),
+                trim_for_line(&notes, area.width.saturating_mul(2) as usize).into_owned(),
                 Style::default().fg(Color::Rgb(214, 218, 222)),
             )));
         }
@@ -2720,7 +2785,7 @@ fn render_taxon_summary_panel(frame: &mut Frame, area: Rect, species: &UnifiedSp
             "Browse the lineage to move into concrete organism entries.".to_string()
         };
         lines.push(Line::from(Span::styled(
-            trim_for_line(&guidance, area.width.saturating_mul(2) as usize),
+            trim_for_line(&guidance, area.width.saturating_mul(2) as usize).into_owned(),
             Style::default().fg(Color::Rgb(214, 218, 222)),
         )));
     }
@@ -2901,56 +2966,74 @@ fn render_browser_list(
     }
     .min(total.saturating_sub(visible_height));
 
-    let lines: Vec<Line> = entries
+    for (row_offset, (index, entry)) in entries
         .iter()
         .enumerate()
         .skip(scroll)
         .take(visible_height)
-        .map(|(i, entry)| {
-            let is_selected = i == selected;
-            let rank_color = get_rank_color(&entry.rank);
-            let style = if is_selected && focused {
-                Style::default().fg(Color::Black).bg(rank_color).bold()
-            } else if is_selected {
-                Style::default().fg(SHELL_PANEL).bg(PANEL_BORDER).bold()
+        .enumerate()
+    {
+        let is_selected = index == selected;
+        let rank_color = get_rank_color(&entry.rank);
+        let style = if is_selected && focused {
+            Style::default().fg(Color::Black).bg(rank_color).bold()
+        } else if is_selected {
+            Style::default().fg(SHELL_PANEL).bg(PANEL_BORDER).bold()
+        } else {
+            Style::default().fg(Color::White)
+        };
+        let selector = if is_selected { "▶ " } else { "  " };
+        let rank_label = show_rank.then(|| display_rank(&entry.rank));
+        let rank_width = rank_label
+            .as_deref()
+            .map_or(0, |rank| rank.chars().count() as u16 + 3);
+        let max_name_chars = inner.width.saturating_sub(rank_width + 2) as usize;
+        let display_name = trim_for_line(&entry.name, max_name_chars.max(1));
+        let row = Rect::new(
+            inner.x,
+            inner.y.saturating_add(row_offset as u16),
+            inner.width,
+            1,
+        );
+        frame.render_widget(
+            Span::styled(
+                selector,
+                Style::default().fg(if focused { ACCENT_YELLOW } else { HEADER_MUTED }),
+            ),
+            row,
+        );
+
+        let name_span = Span::styled(display_name, scientific_name_style(&entry.rank, style));
+        let name_width = name_span.width().min(row.width.saturating_sub(2) as usize) as u16;
+        frame.render_widget(
+            name_span,
+            Rect::new(row.x.saturating_add(2), row.y, name_width, 1),
+        );
+
+        if let Some(rank_label) = rank_label {
+            let rank_style = if is_selected && focused {
+                style
             } else {
-                Style::default().fg(Color::White)
+                Style::default().fg(rank_color)
             };
-            let selector = if is_selected { "▶ " } else { "  " };
-            let rank_suffix = if show_rank {
-                format!(" [{}]", display_rank(&entry.rank))
-            } else {
-                String::new()
-            };
-            let max_name_chars = inner
-                .width
-                .saturating_sub(rank_suffix.chars().count() as u16 + 2)
-                as usize;
-            let display_name = trim_for_line(&entry.name, max_name_chars.max(1));
-
-            let mut spans = vec![
-                Span::styled(
-                    selector,
-                    Style::default().fg(if focused { ACCENT_YELLOW } else { HEADER_MUTED }),
-                ),
-                Span::styled(display_name, scientific_name_style(&entry.rank, style)),
-            ];
-            if show_rank {
-                spans.push(Span::styled(
-                    rank_suffix,
-                    if is_selected && focused {
-                        style
-                    } else {
-                        Style::default().fg(rank_color)
-                    },
-                ));
-            }
-
-            Line::from(spans)
-        })
-        .collect();
-
-    frame.render_widget(Paragraph::new(lines), inner);
+            let suffix_x = row.x.saturating_add(2).saturating_add(name_width);
+            frame.render_widget(
+                Span::styled(" [", rank_style),
+                Rect::new(suffix_x, row.y, 2, 1),
+            );
+            let label_x = suffix_x.saturating_add(2);
+            let label_width = rank_label.chars().count() as u16;
+            frame.render_widget(
+                Span::styled(rank_label, rank_style),
+                Rect::new(label_x, row.y, label_width, 1),
+            );
+            let closing_x = label_x.saturating_add(label_width);
+            frame.render_widget(
+                Span::styled("]", rank_style),
+                Rect::new(closing_x, row.y, 1, 1),
+            );
+        }
+    }
 
     if total > visible_height {
         let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
@@ -2982,6 +3065,7 @@ fn render_ascii_range_content(
     area: Rect,
     species: &UnifiedSpecies,
     show_legend: bool,
+    cache: &mut AsciiRangeCache,
 ) {
     if area.width < 8 || area.height == 0 {
         return;
@@ -2993,26 +3077,8 @@ fn render_ascii_range_content(
         Layout::vertical([Constraint::Min(1)]).split(area)
     };
     let atlas_area = sections[0];
-    let bbox = species.distribution.bounding_box.as_ref().map(|bbox| {
-        (
-            bbox.min_latitude,
-            bbox.max_latitude,
-            bbox.min_longitude,
-            bbox.max_longitude,
-        )
-    });
-    let atlas = crate::world_map::generate_ascii_range_map(
-        atlas_area.width as usize,
-        atlas_area.height as usize,
-        bbox,
-        &species.distribution.continents,
-    );
-    let atlas_lines = atlas
-        .iter()
-        .map(|row| styled_ascii_atlas_line(row))
-        .collect::<Vec<_>>();
-
-    frame.render_widget(Paragraph::new(atlas_lines), atlas_area);
+    let atlas = cache.rows_for(species, atlas_area.width, atlas_area.height);
+    render_cached_ascii_atlas(frame, atlas_area, atlas);
 
     if sections.len() > 1 {
         let legend = Line::from(vec![
@@ -3177,32 +3243,18 @@ fn preferred_image_info(species: &UnifiedSpecies) -> Option<&ImageInfo> {
         .or_else(|| species.images.first())
 }
 
-fn styled_ascii_atlas_line(row: &str) -> Line<'static> {
-    let mut spans = Vec::new();
-    let mut current_style = None;
-    let mut buffer = String::new();
-
-    for ch in row.chars() {
-        let style = ascii_atlas_style(ch);
-        if current_style == Some(style) {
-            buffer.push(ch);
-        } else {
-            if !buffer.is_empty() {
-                spans.push(Span::styled(
-                    std::mem::take(&mut buffer),
-                    current_style.unwrap(),
-                ));
+fn render_cached_ascii_atlas(frame: &mut Frame, area: Rect, rows: &[String]) {
+    let buffer = frame.buffer_mut();
+    for (row_offset, row) in rows.iter().take(area.height as usize).enumerate() {
+        for (column_offset, ch) in row.chars().take(area.width as usize).enumerate() {
+            if let Some(cell) = buffer.cell_mut((
+                area.x.saturating_add(column_offset as u16),
+                area.y.saturating_add(row_offset as u16),
+            )) {
+                cell.set_char(ch).set_style(ascii_atlas_style(ch));
             }
-            buffer.push(ch);
-            current_style = Some(style);
         }
     }
-
-    if !buffer.is_empty() {
-        spans.push(Span::styled(buffer, current_style.unwrap()));
-    }
-
-    Line::from(spans)
 }
 
 fn ascii_atlas_style(ch: char) -> Style {
@@ -3234,21 +3286,42 @@ fn kingdom_label(kingdom: &Option<String>) -> &'static str {
     }
 }
 
-fn display_rank(rank: &str) -> String {
+fn display_rank(rank: &str) -> Cow<'_, str> {
     let trimmed = rank.trim();
     if trimmed.is_empty() {
-        return "Species".to_string();
+        return Cow::Borrowed("Species");
+    }
+
+    for known_rank in [
+        "Kingdom",
+        "Phylum",
+        "Class",
+        "Order",
+        "Family",
+        "Genus",
+        "Species",
+        "Subgenus",
+        "Subspecies",
+        "Variety",
+        "Subvariety",
+        "Form",
+        "Subform",
+        "Clade",
+    ] {
+        if trimmed.eq_ignore_ascii_case(known_rank) {
+            return Cow::Borrowed(known_rank);
+        }
     }
 
     let mut chars = trimmed.chars();
     let Some(first) = chars.next() else {
-        return "Species".to_string();
+        return Cow::Borrowed("Species");
     };
 
     let mut normalized = String::with_capacity(trimmed.len());
     normalized.extend(first.to_uppercase());
     normalized.push_str(&chars.as_str().to_lowercase());
-    normalized
+    Cow::Owned(normalized)
 }
 
 fn conservation_color(status: &str) -> Color {
@@ -3271,16 +3344,27 @@ fn primary_conservation_status(species: &UnifiedSpecies) -> Option<&str> {
 }
 
 fn normalized_conservation_code(status: &str) -> Option<&'static str> {
-    let normalized = status.trim().to_ascii_lowercase();
-    match normalized.as_str() {
-        "lc" | "least concern" => Some("LC"),
-        "nt" | "near threatened" => Some("NT"),
-        "vu" | "vulnerable" => Some("VU"),
-        "en" | "endangered" => Some("EN"),
-        "cr" | "critically endangered" => Some("CR"),
-        "ew" | "extinct in the wild" => Some("EW"),
-        "ex" | "extinct" => Some("EX"),
-        _ => None,
+    let status = status.trim();
+    if status.eq_ignore_ascii_case("lc") || status.eq_ignore_ascii_case("least concern") {
+        Some("LC")
+    } else if status.eq_ignore_ascii_case("nt") || status.eq_ignore_ascii_case("near threatened") {
+        Some("NT")
+    } else if status.eq_ignore_ascii_case("vu") || status.eq_ignore_ascii_case("vulnerable") {
+        Some("VU")
+    } else if status.eq_ignore_ascii_case("en") || status.eq_ignore_ascii_case("endangered") {
+        Some("EN")
+    } else if status.eq_ignore_ascii_case("cr")
+        || status.eq_ignore_ascii_case("critically endangered")
+    {
+        Some("CR")
+    } else if status.eq_ignore_ascii_case("ew")
+        || status.eq_ignore_ascii_case("extinct in the wild")
+    {
+        Some("EW")
+    } else if status.eq_ignore_ascii_case("ex") || status.eq_ignore_ascii_case("extinct") {
+        Some("EX")
+    } else {
+        None
     }
 }
 
@@ -3293,7 +3377,7 @@ fn display_conservation_status(status: &str) -> String {
         Some("CR") => "Critical".to_string(),
         Some("EW") => "Wild extinct".to_string(),
         Some("EX") => "Extinct".to_string(),
-        _ => trim_for_line(status, 12),
+        _ => trim_for_line(status, 12).into_owned(),
     }
 }
 
@@ -3360,21 +3444,43 @@ fn source_badges(species: &UnifiedSpecies) -> Vec<Span<'static>> {
     spans
 }
 
-fn trim_for_line(text: &str, max_chars: usize) -> String {
+fn trim_for_line(text: &str, max_chars: usize) -> Cow<'_, str> {
     if max_chars == 0 {
-        return String::new();
+        return Cow::Borrowed("");
     }
 
-    let cleaned = text.split_whitespace().collect::<Vec<_>>().join(" ");
-    let char_count = cleaned.chars().count();
-    if char_count <= max_chars {
-        return cleaned;
+    let trimmed = text.trim();
+    let mut previous_was_whitespace = false;
+    let needs_normalization = trimmed.chars().any(|ch| {
+        let is_whitespace = ch.is_whitespace();
+        let needs_change = is_whitespace && (ch != ' ' || previous_was_whitespace);
+        previous_was_whitespace = is_whitespace;
+        needs_change
+    });
+
+    if !needs_normalization && trimmed.chars().count() <= max_chars {
+        return Cow::Borrowed(trimmed);
     }
 
+    let cleaned = if needs_normalization {
+        let mut cleaned = String::with_capacity(trimmed.len());
+        for (index, word) in trimmed.split_whitespace().enumerate() {
+            if index > 0 {
+                cleaned.push(' ');
+            }
+            cleaned.push_str(word);
+        }
+        cleaned
+    } else {
+        trimmed.to_owned()
+    };
+    if cleaned.chars().count() <= max_chars {
+        return Cow::Owned(cleaned);
+    }
     let keep = max_chars.saturating_sub(1);
     let mut trimmed = cleaned.chars().take(keep).collect::<String>();
     trimmed.push('…');
-    trimmed
+    Cow::Owned(trimmed)
 }
 
 fn field_notes_text(species: &UnifiedSpecies) -> Option<String> {
@@ -3382,7 +3488,7 @@ fn field_notes_text(species: &UnifiedSpecies) -> Option<String> {
         .description
         .as_deref()
         .or(species.wikipedia_extract.as_deref())
-        .map(|text| trim_for_line(text, 320))
+        .map(|text| trim_for_line(text, 320).into_owned())
 }
 
 fn primary_size_label(species: &UnifiedSpecies) -> &'static str {
@@ -3408,7 +3514,7 @@ fn reproduction_summary_spans(species: &UnifiedSpecies) -> Vec<Span<'static>> {
         .reproductive_traits
         .reproduction_summary();
     let is_unknown = summary.is_none();
-    let summary = trim_for_line(summary.as_deref().unwrap_or("unknown"), 42);
+    let summary = trim_for_line(summary.as_deref().unwrap_or("unknown"), 42).into_owned();
 
     vec![
         Span::styled("Repro ", Style::default().fg(Color::DarkGray)),
@@ -3429,7 +3535,7 @@ fn sex_determination_summary_spans(species: &UnifiedSpecies) -> Vec<Span<'static
         .reproductive_traits
         .sex_determination_summary();
     let is_unknown = summary.is_none();
-    let summary = trim_for_line(summary.as_deref().unwrap_or("unknown"), 42);
+    let summary = trim_for_line(summary.as_deref().unwrap_or("unknown"), 42).into_owned();
 
     vec![
         Span::styled("Sex det ", Style::default().fg(Color::DarkGray)),
@@ -3565,15 +3671,23 @@ fn range_summary_spans(species: &UnifiedSpecies) -> Vec<Span<'static>> {
 }
 
 fn get_rank_color(rank: &str) -> Color {
-    match rank.to_lowercase().as_str() {
-        "kingdom" => Color::Rgb(108, 168, 164),
-        "phylum" => Color::Rgb(255, 179, 71),
-        "class" => Color::Yellow,
-        "order" => Color::Green,
-        "family" => Color::Cyan,
-        "genus" => Color::Magenta,
-        "species" => Color::White,
-        _ => Color::DarkGray,
+    let rank = rank.trim();
+    if rank.eq_ignore_ascii_case("kingdom") {
+        Color::Rgb(108, 168, 164)
+    } else if rank.eq_ignore_ascii_case("phylum") {
+        Color::Rgb(255, 179, 71)
+    } else if rank.eq_ignore_ascii_case("class") {
+        Color::Yellow
+    } else if rank.eq_ignore_ascii_case("order") {
+        Color::Green
+    } else if rank.eq_ignore_ascii_case("family") {
+        Color::Cyan
+    } else if rank.eq_ignore_ascii_case("genus") {
+        Color::Magenta
+    } else if rank.eq_ignore_ascii_case("species") {
+        Color::White
+    } else {
+        Color::DarkGray
     }
 }
 
@@ -3594,17 +3708,19 @@ fn scientific_name_style(rank: &str, style: Style) -> Style {
 }
 
 fn scientific_rank_uses_italics(rank: &str) -> bool {
-    matches!(
-        rank.trim().to_ascii_lowercase().as_str(),
-        "genus"
-            | "subgenus"
-            | "species"
-            | "subspecies"
-            | "variety"
-            | "subvariety"
-            | "form"
-            | "subform"
-    )
+    let rank = rank.trim();
+    [
+        "genus",
+        "subgenus",
+        "species",
+        "subspecies",
+        "variety",
+        "subvariety",
+        "form",
+        "subform",
+    ]
+    .iter()
+    .any(|scientific_rank| rank.eq_ignore_ascii_case(scientific_rank))
 }
 
 fn render_help(frame: &mut Frame) {
@@ -3707,14 +3823,23 @@ fn primary_catalog_id(species: &UnifiedSpecies) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        compact_assembly_spans, selected_search_target, sex_determination_summary_spans,
-        source_badges, SearchSuggestion,
+        compact_assembly_spans, render_browser_list, render_frame, render_status_bar,
+        selected_search_target, sex_determination_summary_spans, source_badges, trim_for_line,
+        AsciiRangeCache, NavigatorFocus, RenderState, SearchAvailability, SearchSuggestion,
+        SiblingTaxon, StatusBanner, StatusTone,
     };
     use crate::species::{
         Distribution, EvidenceMethod, ExternalIds, GenomeStats, Karyotype, LifeHistory, Taxonomy,
         TraitEvidence, TraitScope, TraitSource, UnifiedSpecies,
     };
-    use ratatui::text::Span;
+    use ratatui::{
+        backend::TestBackend,
+        layout::Constraint,
+        prelude::{Color, Layout},
+        text::Span,
+        Terminal,
+    };
+    use std::{borrow::Cow, hint::black_box, time::Instant};
 
     fn test_species() -> UnifiedSpecies {
         UnifiedSpecies {
@@ -3743,6 +3868,169 @@ mod tests {
             .into_iter()
             .map(|span| span.content.into_owned())
             .collect()
+    }
+
+    #[test]
+    fn line_trimming_borrows_clean_text_and_normalizes_only_when_needed() {
+        let clean = "Anas platyrhynchos";
+        let unmodified = trim_for_line(clean, 40);
+        assert!(matches!(unmodified, Cow::Borrowed(value) if value == clean));
+        assert_eq!(trim_for_line("  Anas\t platyrhynchos  ", 40), clean);
+        assert_eq!(trim_for_line(clean, 8), "Anas pl…");
+    }
+
+    #[test]
+    fn navigator_rows_preserve_labels_and_selected_style_without_line_vectors() {
+        let entries = vec![SiblingTaxon {
+            name: "Anas platyrhynchos".to_string(),
+            rank: "SPECIES".to_string(),
+        }];
+        let mut terminal =
+            Terminal::new(TestBackend::new(48, 5)).expect("test terminal should initialize");
+
+        terminal
+            .draw(|frame| {
+                render_browser_list(frame, frame.area(), &entries, "Species List", 0, true, true);
+            })
+            .expect("navigator should render");
+
+        let buffer = terminal.backend().buffer();
+        let screen = buffer
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+        assert!(screen.contains("▶ Anas platyrhynchos [Species]"));
+        assert_eq!(buffer[(3, 1)].bg, Color::White);
+        assert_eq!(buffer[(3, 1)].fg, Color::Black);
+    }
+
+    fn render_fixture() -> (UnifiedSpecies, Vec<SiblingTaxon>) {
+        let mut species = test_species();
+        crate::local_supplements::apply_local_supplements(&mut species);
+        species
+            .taxonomy
+            .ensure_display_lineage(&species.scientific_name.clone(), &species.rank.clone());
+
+        let entries = (0..100)
+            .map(|index| SiblingTaxon {
+                name: format!("Field specimen {index:03}"),
+                rank: "SPECIES".to_string(),
+            })
+            .collect();
+        (species, entries)
+    }
+
+    fn draw_full_frame(
+        terminal: &mut Terminal<TestBackend>,
+        species: &UnifiedSpecies,
+        entries: &[SiblingTaxon],
+        selected: usize,
+        ascii_range_cache: &mut AsciiRangeCache,
+        status: &StatusBanner,
+    ) {
+        let mut image_state = None;
+        let mut map_state = None;
+        let search_availability = SearchAvailability {
+            has_offline_index: true,
+            live_lookup_enabled: false,
+        };
+
+        terminal
+            .draw(|frame| {
+                let layout = Layout::vertical([Constraint::Min(0), Constraint::Length(3)])
+                    .split(frame.area());
+                let mut state = RenderState {
+                    species,
+                    browser_entries: entries,
+                    browser_title: "Anatidae",
+                    browser_index: selected,
+                    species_list_entries: entries,
+                    species_list_index: selected,
+                    navigator_focus: NavigatorFocus::SpeciesList,
+                    image_state: &mut image_state,
+                    map_state: &mut map_state,
+                    ascii_range_cache,
+                    search_mode: false,
+                    search_query: "",
+                    search_suggestions: None,
+                    search_selected: 0,
+                    is_favorite: false,
+                    search_availability,
+                };
+                render_frame(frame, layout[0], &mut state);
+                render_status_bar(
+                    frame,
+                    layout[1],
+                    status,
+                    false,
+                    0,
+                    false,
+                    search_availability,
+                );
+            })
+            .expect("production frame should render on the test backend");
+    }
+
+    #[test]
+    fn full_field_record_renders_on_a_handheld_sized_terminal() {
+        let (species, entries) = render_fixture();
+        let mut terminal =
+            Terminal::new(TestBackend::new(180, 50)).expect("test terminal should initialize");
+        let mut ascii_range_cache = AsciiRangeCache::default();
+        let status = StatusBanner::new(StatusTone::Success, "Record ready");
+
+        draw_full_frame(
+            &mut terminal,
+            &species,
+            &entries,
+            0,
+            &mut ascii_range_cache,
+            &status,
+        );
+
+        let screen = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+        assert!(screen.contains("BioDex"));
+        assert!(screen.contains("Mallard"));
+        assert!(screen.contains("Species List"));
+        assert!(screen.contains("Sex det"));
+    }
+
+    #[test]
+    #[ignore = "manual sustained production-render profiling workload"]
+    fn profile_sustained_render() {
+        const FRAME_COUNT: usize = 5_000;
+        let (species, entries) = render_fixture();
+        let mut terminal =
+            Terminal::new(TestBackend::new(180, 50)).expect("test terminal should initialize");
+        let mut ascii_range_cache = AsciiRangeCache::default();
+        let status = StatusBanner::new(StatusTone::Success, "Record ready");
+        let started = Instant::now();
+
+        for frame_index in 0..FRAME_COUNT {
+            draw_full_frame(
+                &mut terminal,
+                &species,
+                &entries,
+                frame_index % entries.len(),
+                &mut ascii_range_cache,
+                &status,
+            );
+            black_box(terminal.backend().buffer());
+        }
+
+        let elapsed = started.elapsed();
+        eprintln!(
+            "render_profile frames={FRAME_COUNT} elapsed_ms={:.3} ns_per_frame={:.0}",
+            elapsed.as_secs_f64() * 1_000.0,
+            elapsed.as_nanos() as f64 / FRAME_COUNT as f64,
+        );
     }
 
     #[test]
