@@ -503,10 +503,7 @@ pub async fn run_tui_loop(
     };
     let mut status = StatusBanner::new(
         StatusTone::Info,
-        format!(
-            "{} ready. Use ↑/↓ for the A-Z species list, or press t for taxonomy.",
-            species.scientific_name
-        ),
+        format!("{} ready.", species.scientific_name),
     );
 
     let mut image_state = picker
@@ -584,8 +581,8 @@ pub async fn run_tui_loop(
                     &status,
                     loading,
                     spinner_frame,
-                    is_favorite,
-                    search_availability,
+                    navigator_focus,
+                    search_mode,
                 );
             }
         })?;
@@ -798,11 +795,11 @@ pub async fn run_tui_loop(
                                 status = match navigator_focus {
                                     NavigatorFocus::Taxonomy => StatusBanner::new(
                                         StatusTone::Info,
-                                        "Taxonomy browser active. Use ←/→ to walk the lineage.",
+                                        "Taxonomy browser active.",
                                     ),
                                     NavigatorFocus::SpeciesList => StatusBanner::new(
                                         StatusTone::Info,
-                                        "A-Z species list active. Use ↑/↓ to skim; pausing auto-loads the species.",
+                                        "A-Z auto-scan active.",
                                     ),
                                 };
                             }
@@ -1121,36 +1118,11 @@ pub async fn run_tui_loop(
                             browser_history.clear();
                             spawn_browser_for_species(update_tx.clone(), service.clone(), species.clone());
                         }
-                        status = match (refreshed, navigator_focus) {
-                            (true, NavigatorFocus::Taxonomy) => StatusBanner::new(
-                                StatusTone::Success,
-                                format!(
-                                    "Refreshed {}. Taxonomy browser still active; press t for the A-Z list.",
-                                    species.scientific_name
-                                ),
-                            ),
-                            (true, NavigatorFocus::SpeciesList) => StatusBanner::new(
-                                StatusTone::Success,
-                                format!(
-                                    "Refreshed {}. A-Z list active; pausing on another species auto-loads it.",
-                                    species.scientific_name
-                                ),
-                            ),
-                            (false, NavigatorFocus::Taxonomy) => StatusBanner::new(
-                                StatusTone::Success,
-                                format!(
-                                    "Opened {}. Taxonomy browser still active; press t for the A-Z list.",
-                                    species.scientific_name
-                                ),
-                            ),
-                            (false, NavigatorFocus::SpeciesList) => StatusBanner::new(
-                                StatusTone::Success,
-                                format!(
-                                    "Opened {}. Use ↑/↓ to browse; pausing on another species auto-loads it.",
-                                    species.scientific_name
-                                ),
-                            ),
-                        };
+                        let action = if refreshed { "Refreshed" } else { "Opened" };
+                        status = StatusBanner::new(
+                            StatusTone::Success,
+                            format!("{action} {}.", species.scientific_name),
+                        );
                     }
                     Some(TuiUpdate::MediaLoaded { scientific_name, species_image: new_img, map_image: new_map }) => {
                         if scientific_name == species.scientific_name {
@@ -2011,7 +1983,7 @@ fn render_top_banner(
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
-    let cols = Layout::horizontal([Constraint::Min(20), Constraint::Length(24)]).split(inner);
+    let cols = Layout::horizontal([Constraint::Min(20), Constraint::Length(30)]).split(inner);
     let common_name = primary_common_name(species);
     let display_name = common_name.unwrap_or(&species.scientific_name);
     let display_name_style = if common_name.is_some() {
@@ -2060,7 +2032,7 @@ fn render_top_banner(
             ACCENT_MINT,
         ),
         Span::raw(" "),
-        badge("REAL DATA", Color::Black, ACCENT_SKY),
+        badge("SOURCED", Color::Black, ACCENT_SKY),
     ];
     if is_favorite {
         right_spans.push(Span::raw(" "));
@@ -2091,8 +2063,8 @@ fn render_status_bar(
     status: &StatusBanner,
     loading: bool,
     spinner_frame: usize,
-    is_favorite: bool,
-    search_availability: SearchAvailability,
+    navigator_focus: NavigatorFocus,
+    search_mode: bool,
 ) {
     let block = Block::default()
         .borders(Borders::TOP)
@@ -2138,52 +2110,50 @@ fn render_status_bar(
 
     frame.render_widget(Paragraph::new(Line::from(status_spans)), rows[0]);
 
-    let collection_badge = if is_favorite {
-        badge("SAVED", Color::Black, ACCENT_YELLOW)
-    } else {
-        badge("UNSAVED", Color::Black, Color::Rgb(112, 118, 122))
-    };
-    let search_badge = if !search_availability.live_lookup_enabled {
-        badge("OFFLINE MODE", Color::Black, ACCENT_MINT)
-    } else if search_availability.has_offline_index {
-        badge("INDEX READY", Color::Black, ACCENT_MINT)
-    } else {
-        badge("LIVE SEARCH", Color::Black, ACCENT_YELLOW)
-    };
+    frame.render_widget(
+        Paragraph::new(context_control_hints(navigator_focus, search_mode)),
+        rows[1],
+    );
+}
 
-    let controls = Line::from(vec![
-        collection_badge,
-        Span::raw(" "),
-        search_badge,
-        Span::raw("  "),
-        Span::styled("t ", Style::default().fg(ACCENT_YELLOW)),
-        Span::styled("mode", Style::default().fg(Color::Rgb(224, 228, 231))),
-        Span::raw("  "),
-        Span::styled("↑↓ ", Style::default().fg(ACCENT_YELLOW)),
-        Span::styled("move", Style::default().fg(Color::Rgb(224, 228, 231))),
-        Span::raw("  "),
-        Span::styled("← ", Style::default().fg(ACCENT_YELLOW)),
-        Span::styled("up", Style::default().fg(Color::Rgb(224, 228, 231))),
-        Span::raw("  "),
-        Span::styled("→ ", Style::default().fg(ACCENT_YELLOW)),
-        Span::styled("open", Style::default().fg(Color::Rgb(224, 228, 231))),
-        Span::raw("  "),
-        Span::styled("/ ", Style::default().fg(ACCENT_YELLOW)),
-        Span::styled("search", Style::default().fg(Color::Rgb(224, 228, 231))),
-        Span::raw("  "),
-        Span::styled("r ", Style::default().fg(ACCENT_YELLOW)),
-        Span::styled("ref", Style::default().fg(Color::Rgb(224, 228, 231))),
-        Span::raw("  "),
-        Span::styled("f ", Style::default().fg(ACCENT_YELLOW)),
-        Span::styled("save", Style::default().fg(Color::Rgb(224, 228, 231))),
-        Span::raw("  "),
-        Span::styled("? ", Style::default().fg(ACCENT_YELLOW)),
-        Span::styled("help", Style::default().fg(Color::Rgb(224, 228, 231))),
-        Span::raw("  "),
-        Span::styled("q ", Style::default().fg(ACCENT_YELLOW)),
-        Span::styled("quit", Style::default().fg(Color::Rgb(224, 228, 231))),
-    ]);
-    frame.render_widget(Paragraph::new(controls), rows[1]);
+fn context_control_hints(navigator_focus: NavigatorFocus, search_mode: bool) -> Line<'static> {
+    let mut controls = Vec::with_capacity(24);
+    if search_mode {
+        push_control_hint(&mut controls, "type ", "query");
+        push_control_hint(&mut controls, "↑↓ ", "choose");
+        push_control_hint(&mut controls, "Enter ", "inspect");
+        push_control_hint(&mut controls, "Esc ", "close");
+    } else {
+        push_control_hint(&mut controls, "↑↓ ", "browse");
+        match navigator_focus {
+            NavigatorFocus::SpeciesList => {
+                push_control_hint(&mut controls, "Enter ", "inspect");
+                push_control_hint(&mut controls, "t ", "taxonomy");
+                push_control_hint(&mut controls, "/ ", "search");
+                push_control_hint(&mut controls, "f ", "save");
+            }
+            NavigatorFocus::Taxonomy => {
+                push_control_hint(&mut controls, "← ", "parent");
+                push_control_hint(&mut controls, "→ ", "descend");
+                push_control_hint(&mut controls, "t ", "species");
+                push_control_hint(&mut controls, "/ ", "search");
+            }
+        }
+        push_control_hint(&mut controls, "q ", "quit");
+        push_control_hint(&mut controls, "? ", "help");
+    }
+    Line::from(controls)
+}
+
+fn push_control_hint(controls: &mut Vec<Span<'static>>, key: &'static str, action: &'static str) {
+    if !controls.is_empty() {
+        controls.push(Span::raw("  "));
+    }
+    controls.push(Span::styled(key, Style::default().fg(ACCENT_YELLOW)));
+    controls.push(Span::styled(
+        action,
+        Style::default().fg(Color::Rgb(224, 228, 231)),
+    ));
 }
 
 fn render_search_overlay(
@@ -2331,8 +2301,8 @@ fn render_search_overlay(
 fn render_wide_layout(frame: &mut Frame, area: Rect, state: &mut RenderState<'_>) {
     let chunks = Layout::horizontal([
         Constraint::Percentage(30),
-        Constraint::Percentage(32),
-        Constraint::Percentage(38),
+        Constraint::Percentage(44),
+        Constraint::Percentage(26),
     ])
     .split(area);
 
@@ -2800,31 +2770,14 @@ fn render_taxon_summary_panel(frame: &mut Frame, area: Rect, species: &UnifiedSp
 }
 
 fn render_taxonomy_panel(frame: &mut Frame, area: Rect, state: &RenderState<'_>) {
-    let mode_title = match state.navigator_focus {
-        NavigatorFocus::SpeciesList => " Species Navigator ",
-        NavigatorFocus::Taxonomy => " Taxonomy Browser ",
-    };
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(DATA_EDGE))
-        .style(Style::default().bg(PANEL_BG))
-        .title(mode_title)
-        .title_style(Style::default().fg(Color::Black).bg(DATA_EDGE).bold());
-    let inner = block.inner(area);
-    frame.render_widget(block, area);
-
-    if inner.height == 0 {
-        render_navigation_lists(frame, inner, state);
-        return;
-    }
-    render_navigation_lists(frame, inner, state);
+    render_navigation_lists(frame, area, state);
 }
 
 fn render_navigation_lists(frame: &mut Frame, area: Rect, state: &RenderState<'_>) {
     let (entries, title, selected, show_rank) = match state.navigator_focus {
         NavigatorFocus::SpeciesList => (
             state.species_list_entries,
-            "Species List",
+            "A-Z Species",
             state.species_list_index,
             false,
         ),
@@ -2835,7 +2788,7 @@ fn render_navigation_lists(frame: &mut Frame, area: Rect, state: &RenderState<'_
             true,
         ),
     };
-    render_browser_list(frame, area, entries, title, selected, true, show_rank);
+    render_browser_list(frame, area, entries, title, selected, show_rank);
 }
 
 fn render_species_taxonomy_summary(
@@ -2930,15 +2883,25 @@ fn render_browser_list(
     entries: &[SiblingTaxon],
     browser_title: &str,
     selected: usize,
-    focused: bool,
     show_rank: bool,
 ) {
-    let accent = if focused { ACCENT_YELLOW } else { ACCENT_SKY };
+    let accent = ACCENT_YELLOW;
+    let position = if entries.is_empty() {
+        "0/0".to_string()
+    } else {
+        let total_digits = entries.len().to_string().len();
+        format!(
+            "{:0width$}/{}",
+            selected.min(entries.len() - 1) + 1,
+            entries.len(),
+            width = total_digits,
+        )
+    };
     let block = Block::default()
         .borders(Borders::ALL)
         .border_style(Style::default().fg(accent))
         .style(Style::default().bg(DATA_BG))
-        .title(format!(" {} · {} ", browser_title, entries.len()))
+        .title(format!(" {browser_title} · {position} "))
         .title_style(Style::default().fg(Color::Black).bg(accent).bold());
 
     let inner = block.inner(area);
@@ -2975,10 +2938,8 @@ fn render_browser_list(
     {
         let is_selected = index == selected;
         let rank_color = get_rank_color(&entry.rank);
-        let style = if is_selected && focused {
+        let style = if is_selected {
             Style::default().fg(Color::Black).bg(rank_color).bold()
-        } else if is_selected {
-            Style::default().fg(SHELL_PANEL).bg(PANEL_BORDER).bold()
         } else {
             Style::default().fg(Color::White)
         };
@@ -2996,10 +2957,7 @@ fn render_browser_list(
             1,
         );
         frame.render_widget(
-            Span::styled(
-                selector,
-                Style::default().fg(if focused { ACCENT_YELLOW } else { HEADER_MUTED }),
-            ),
+            Span::styled(selector, Style::default().fg(ACCENT_YELLOW)),
             row,
         );
 
@@ -3011,7 +2969,7 @@ fn render_browser_list(
         );
 
         if let Some(rank_label) = rank_label {
-            let rank_style = if is_selected && focused {
+            let rank_style = if is_selected {
                 style
             } else {
                 Style::default().fg(rank_color)
@@ -3823,10 +3781,10 @@ fn primary_catalog_id(species: &UnifiedSpecies) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        compact_assembly_spans, render_browser_list, render_frame, render_status_bar,
-        selected_search_target, sex_determination_summary_spans, source_badges, trim_for_line,
-        AsciiRangeCache, NavigatorFocus, RenderState, SearchAvailability, SearchSuggestion,
-        SiblingTaxon, StatusBanner, StatusTone,
+        compact_assembly_spans, context_control_hints, render_browser_list, render_frame,
+        render_status_bar, selected_search_target, sex_determination_summary_spans, source_badges,
+        trim_for_line, AsciiRangeCache, NavigatorFocus, RenderState, SearchAvailability,
+        SearchSuggestion, SiblingTaxon, StatusBanner, StatusTone,
     };
     use crate::species::{
         Distribution, EvidenceMethod, ExternalIds, GenomeStats, Karyotype, LifeHistory, Taxonomy,
@@ -3870,6 +3828,10 @@ mod tests {
             .collect()
     }
 
+    fn line_text(line: ratatui::text::Line<'static>) -> String {
+        span_text(line.spans)
+    }
+
     #[test]
     fn line_trimming_borrows_clean_text_and_normalizes_only_when_needed() {
         let clean = "Anas platyrhynchos";
@@ -3890,7 +3852,7 @@ mod tests {
 
         terminal
             .draw(|frame| {
-                render_browser_list(frame, frame.area(), &entries, "Species List", 0, true, true);
+                render_browser_list(frame, frame.area(), &entries, "Species List", 0, true);
             })
             .expect("navigator should render");
 
@@ -3900,9 +3862,28 @@ mod tests {
             .iter()
             .map(|cell| cell.symbol())
             .collect::<String>();
+        assert!(screen.contains("Species List · 1/1"));
         assert!(screen.contains("▶ Anas platyrhynchos [Species]"));
         assert_eq!(buffer[(3, 1)].bg, Color::White);
         assert_eq!(buffer[(3, 1)].fg, Color::Black);
+    }
+
+    #[test]
+    fn command_strip_tracks_the_active_interaction_mode() {
+        let species = line_text(context_control_hints(NavigatorFocus::SpeciesList, false));
+        assert!(species.contains("Enter inspect"));
+        assert!(species.contains("t taxonomy"));
+        assert!(!species.contains("← parent"));
+
+        let taxonomy = line_text(context_control_hints(NavigatorFocus::Taxonomy, false));
+        assert!(taxonomy.contains("← parent"));
+        assert!(taxonomy.contains("→ descend"));
+        assert!(taxonomy.contains("t species"));
+
+        let search = line_text(context_control_hints(NavigatorFocus::SpeciesList, true));
+        assert!(search.contains("type query"));
+        assert!(search.contains("Esc close"));
+        assert!(!search.contains("t taxonomy"));
     }
 
     fn render_fixture() -> (UnifiedSpecies, Vec<SiblingTaxon>) {
@@ -3965,8 +3946,8 @@ mod tests {
                     status,
                     false,
                     0,
+                    NavigatorFocus::SpeciesList,
                     false,
-                    search_availability,
                 );
             })
             .expect("production frame should render on the test backend");
@@ -3998,8 +3979,54 @@ mod tests {
             .collect::<String>();
         assert!(screen.contains("BioDex"));
         assert!(screen.contains("Mallard"));
-        assert!(screen.contains("Species List"));
+        assert!(screen.contains("A-Z Species · 001/100"));
+        assert!(!screen.contains("Species Navigator"));
         assert!(screen.contains("Sex det"));
+        assert!(screen.contains("Enter inspect"));
+    }
+
+    #[test]
+    fn field_record_keeps_essential_orientation_across_layout_breakpoints() {
+        let (species, entries) = render_fixture();
+        let status = StatusBanner::new(StatusTone::Success, "Record ready");
+
+        for (width, height) in [(180, 50), (90, 44), (58, 45)] {
+            let mut terminal = Terminal::new(TestBackend::new(width, height))
+                .expect("test terminal should initialize");
+            let mut ascii_range_cache = AsciiRangeCache::default();
+            draw_full_frame(
+                &mut terminal,
+                &species,
+                &entries,
+                0,
+                &mut ascii_range_cache,
+                &status,
+            );
+
+            let screen = terminal
+                .backend()
+                .buffer()
+                .content()
+                .iter()
+                .map(|cell| cell.symbol())
+                .collect::<String>();
+            assert!(
+                screen.contains("BioDex"),
+                "missing shell at {width}x{height}"
+            );
+            assert!(
+                screen.contains("Mallard"),
+                "missing record at {width}x{height}"
+            );
+            assert!(
+                screen.contains("A-Z Species"),
+                "missing navigator at {width}x{height}"
+            );
+            assert!(
+                screen.contains("↑↓ browse"),
+                "missing primary control at {width}x{height}"
+            );
+        }
     }
 
     #[test]

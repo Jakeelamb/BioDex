@@ -118,6 +118,11 @@ The examples below assume `biodex` is on your PATH. If not, use `./target/releas
 
 ## Controls
 
+The bottom command strip follows the active species, taxonomy, or search mode;
+press `?` for the complete control map. The navigator header shows the selected
+record position, and pausing on an A-Z species automatically opens its field
+record.
+
 - `↑/↓` or `j/k`: move through the active navigator
 - `t`: switch between the A-Z species list and taxonomy browser
 - `Enter` / `l` / `→`: open the selected entry
